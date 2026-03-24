@@ -18,8 +18,15 @@ const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER;
-const twilioClient =
-  TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) : null;
+const hasTwilioCreds =
+  typeof TWILIO_ACCOUNT_SID === "string" &&
+  TWILIO_ACCOUNT_SID.startsWith("AC") &&
+  typeof TWILIO_AUTH_TOKEN === "string" &&
+  TWILIO_AUTH_TOKEN.length > 0;
+const twilioClient = hasTwilioCreds ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) : null;
+if (!twilioClient) {
+  console.warn("Twilio not configured. SMS notifications will be skipped.");
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));

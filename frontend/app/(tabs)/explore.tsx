@@ -1,29 +1,72 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { useAuth } from '@/lib/auth';
+import { authedApiFetch } from '@/lib/api';
 
-type Route = {
-  id: number;
-  name: string;
-  distance: string;
-  duration: string;
-  safetyScore: number;
-  alerts: number;
-  type: 'safest' | 'fastest' | 'shortest';
+type ApiRoute = {
+  id: string;
+  label: string;
+  distance_km: number;
+  duration_min: number;
+  safety_score: number;
 };
 
-const routes: Route[] = [
-  { id: 1, name: 'Main Street Route', distance: '3.2 km', duration: '12 min', safetyScore: 95, alerts: 0, type: 'safest' },
-  { id: 2, name: 'Highway Route', distance: '2.8 km', duration: '8 min', safetyScore: 78, alerts: 2, type: 'fastest' },
-  { id: 3, name: 'Scenic Route', distance: '2.5 km', duration: '15 min', safetyScore: 88, alerts: 1, type: 'shortest' },
-];
+type TimeOfDay = 'day' | 'night' | 'auto';
 
 export default function RoutesScreen() {
+  const { token } = useAuth();
+  const [start, setStart] = useState('');
   const [destination, setDestination] = useState('');
-  const [showRoutes, setShowRoutes] = useState(false);
+  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>('auto');
+  const [routes, setRoutes] = useState<ApiRoute[]>([]);
+  const [note, setNote] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSearch = () => {
-    if (destination.trim()) setShowRoutes(true);
+  const showRoutes = routes.length > 0;
+
+  const bestRouteId = useMemo(() => {
+    if (!routes.length) return null;
+    return routes.reduce((best, route) => {
+      if (!best) return route;
+      return route.safety_score > best.safety_score ? route : best;
+    }, routes[0]).id;
+  }, [routes]);
+
+  const handleSearch = async () => {
+    if (!token) {
+      setError('Please sign in to request safe routes.');
+      return;
+    }
+    if (!destination.trim()) {
+      setError('Enter a destination to continue.');
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    setNote(null);
+    try {
+      const payload: Record<string, any> = {
+        start_location_name: start.trim() || undefined,
+        end_location_name: destination.trim(),
+      };
+      if (timeOfDay !== 'auto') payload.time_of_day = timeOfDay;
+
+      const result = await authedApiFetch('/api/safe-route/plan', token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      setRoutes(Array.isArray(result?.routes) ? result.routes : []);
+      setNote(result?.note ?? null);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to fetch routes');
+      setRoutes([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -36,10 +79,19 @@ export default function RoutesScreen() {
       <View style={styles.card}>
         <View style={styles.currentRow}>
           <View style={styles.dot} />
-          <Text style={styles.currentText}>Current Location</Text>
+          <Text style={styles.currentText}>Start location (optional)</Text>
         </View>
         <View style={styles.inputWrap}>
           <MaterialIcons name="place" size={16} color="#94A3B8" />
+          <TextInput
+            placeholder="Enter start (optional)"
+            value={start}
+            onChangeText={setStart}
+            style={styles.input}
+          />
+        </View>
+        <View style={styles.inputWrap}>
+          <MaterialIcons name="navigation" size={16} color="#94A3B8" />
           <TextInput
             placeholder="Enter destination..."
             value={destination}
@@ -48,10 +100,35 @@ export default function RoutesScreen() {
             style={styles.input}
           />
         </View>
+        <View style={styles.timeRow}>
+          {(['auto', 'day', 'night'] as TimeOfDay[]).map((value) => (
+            <Pressable
+              key={value}
+              style={[
+                styles.timePill,
+                timeOfDay === value && styles.timePillActive,
+              ]}
+              onPress={() => setTimeOfDay(value)}
+            >
+              <Text
+                style={[
+                  styles.timePillText,
+                  timeOfDay === value && styles.timePillTextActive,
+                ]}
+              >
+                {value === 'auto' ? 'Auto' : value === 'day' ? 'Day' : 'Night'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
         <Pressable style={styles.primaryButton} onPress={handleSearch}>
           <MaterialIcons name="navigation" size={16} color="#FFFFFF" />
-          <Text style={styles.primaryButtonText}>Find Safe Routes</Text>
+          <Text style={styles.primaryButtonText}>
+            {loading ? 'Finding Routes...' : 'Find Safe Routes'}
+          </Text>
         </Pressable>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {note ? <Text style={styles.noteText}>{note}</Text> : null}
       </View>
 
       {showRoutes ? (
@@ -69,51 +146,53 @@ export default function RoutesScreen() {
               <View style={styles.routeTop}>
                 <View style={{ flex: 1 }}>
                   <View style={styles.routeTitleRow}>
-                    <Text style={styles.routeName}>{route.name}</Text>
+                    <Text style={styles.routeName}>{route.label}</Text>
                     <View
                       style={[
                         styles.typeBadge,
-                        route.type === 'safest' && styles.typeBadgeGreen,
-                        route.type === 'fastest' && styles.typeBadgeBlue,
+                        route.id === bestRouteId && styles.typeBadgeGreen,
                       ]}>
                       <Text style={styles.typeBadgeText}>
-                        {route.type === 'safest' ? 'Safest' : route.type === 'fastest' ? 'Fastest' : 'Shortest'}
+                        {route.id === bestRouteId ? 'Safest' : 'Option'}
                       </Text>
                     </View>
                   </View>
                   <View style={styles.routeMetaRow}>
                     <View style={styles.routeMeta}>
                       <MaterialIcons name="navigation" size={12} color="#94A3B8" />
-                      <Text style={styles.routeMetaText}>{route.distance}</Text>
+                      <Text style={styles.routeMetaText}>
+                        {route.distance_km.toFixed(2)} km
+                      </Text>
                     </View>
                     <View style={styles.routeMeta}>
                       <MaterialIcons name="schedule" size={12} color="#94A3B8" />
-                      <Text style={styles.routeMetaText}>{route.duration}</Text>
+                      <Text style={styles.routeMetaText}>
+                        {route.duration_min.toFixed(1)} min
+                      </Text>
                     </View>
                   </View>
                 </View>
                 <View style={styles.score}>
-                  <Text
-                    style={[
-                      styles.scoreValue,
-                      route.safetyScore >= 90 && { color: '#16A34A' },
-                      route.safetyScore < 90 && route.safetyScore >= 75 && { color: '#CA8A04' },
-                      route.safetyScore < 75 && { color: '#DC2626' },
-                    ]}>
-                    {route.safetyScore}%
-                  </Text>
-                  <Text style={styles.scoreLabel}>Safety</Text>
+                  {(() => {
+                    const percent = Math.round((route.safety_score || 0) * 100);
+                    return (
+                      <>
+                        <Text
+                          style={[
+                            styles.scoreValue,
+                            percent >= 90 && { color: '#16A34A' },
+                            percent < 90 && percent >= 75 && { color: '#CA8A04' },
+                            percent < 75 && { color: '#DC2626' },
+                          ]}
+                        >
+                          {percent}%
+                        </Text>
+                        <Text style={styles.scoreLabel}>Safety</Text>
+                      </>
+                    );
+                  })()}
                 </View>
               </View>
-
-              {route.alerts > 0 ? (
-                <View style={styles.alertBox}>
-                  <MaterialIcons name="warning" size={14} color="#CA8A04" />
-                  <Text style={styles.alertText}>
-                    {route.alerts} active alert{route.alerts > 1 ? 's' : ''} on this route
-                  </Text>
-                </View>
-              ) : null}
 
               <Pressable style={styles.primaryButton}>
                 <Text style={styles.primaryButtonText}>Start Navigation</Text>
@@ -189,6 +268,30 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
+  },
+  timeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  timePill: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  timePillActive: {
+    borderColor: '#7C3AED',
+    backgroundColor: '#EDE9FE',
+  },
+  timePillText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  timePillTextActive: {
+    color: '#6D28D9',
   },
   primaryButton: {
     flexDirection: 'row',
@@ -316,6 +419,14 @@ const styles = StyleSheet.create({
   placeholderText: {
     color: '#64748B',
     textAlign: 'center',
+  },
+  errorText: {
+    color: '#DC2626',
+    fontSize: 12,
+  },
+  noteText: {
+    color: '#475569',
+    fontSize: 12,
   },
 });
 

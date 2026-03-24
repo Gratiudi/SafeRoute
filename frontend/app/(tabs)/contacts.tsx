@@ -16,6 +16,7 @@ export default function ContactsScreen() {
   const [contacts, setContacts] = useState<EmergencyContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -40,7 +41,21 @@ export default function ContactsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const onAdd = async () => {
+  const resetForm = () => {
+    setName('');
+    setPhone('');
+    setRelationship('');
+    setEditingId(null);
+  };
+
+  const startEdit = (contact: EmergencyContact) => {
+    setEditingId(contact.contact_id);
+    setName(contact.name);
+    setPhone(contact.phone_number);
+    setRelationship(contact.relationship ?? '');
+  };
+
+  const onSave = async () => {
     if (!token) return;
     if (!name.trim() || !phone.trim()) {
       Alert.alert('Missing info', 'Name and phone are required');
@@ -48,19 +63,32 @@ export default function ContactsScreen() {
     }
     try {
       setSaving(true);
-      const newContact = await authedApiFetch('/api/emergency-contacts', token, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
-          phone_number: phone.trim(),
-          relationship: relationship.trim() || undefined,
-        }),
-      });
-      setContacts((prev) => [...prev, newContact]);
-      setName('');
-      setPhone('');
-      setRelationship('');
+      if (editingId) {
+        const updated = await authedApiFetch(`/api/emergency-contacts/${editingId}`, token, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: name.trim(),
+            phone_number: phone.trim(),
+            relationship: relationship.trim() || null,
+          }),
+        });
+        setContacts((prev) =>
+          prev.map((c) => (c.contact_id === editingId ? updated : c))
+        );
+      } else {
+        const newContact = await authedApiFetch('/api/emergency-contacts', token, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: name.trim(),
+            phone_number: phone.trim(),
+            relationship: relationship.trim() || undefined,
+          }),
+        });
+        setContacts((prev) => [...prev, newContact]);
+      }
+      resetForm();
     } catch (e: any) {
       console.error(e);
       Alert.alert('Error', e?.message ?? 'Failed to save contact');
@@ -110,12 +138,21 @@ export default function ContactsScreen() {
               onChangeText={setRelationship}
               style={styles.input}
             />
-            <Pressable
-              style={[styles.primaryButton, saving && styles.buttonDisabled]}
-              onPress={onAdd}
-              disabled={saving}>
-              <Text style={styles.primaryButtonText}>{saving ? 'Saving...' : 'Save contact'}</Text>
-            </Pressable>
+            <View style={styles.formActions}>
+              {editingId ? (
+                <Pressable style={styles.ghostButton} onPress={resetForm} disabled={saving}>
+                  <Text style={styles.ghostButtonText}>Cancel</Text>
+                </Pressable>
+              ) : null}
+              <Pressable
+                style={[styles.primaryButton, saving && styles.buttonDisabled]}
+                onPress={onSave}
+                disabled={saving}>
+                <Text style={styles.primaryButtonText}>
+                  {saving ? 'Saving...' : editingId ? 'Update contact' : 'Save contact'}
+                </Text>
+              </Pressable>
+            </View>
           </View>
 
           <Text style={styles.sectionTitle}>Your contacts</Text>
@@ -132,9 +169,14 @@ export default function ContactsScreen() {
                 <Text style={styles.contactName}>{item.name}</Text>
                 {item.relationship ? <Text style={styles.contactMeta}>{item.relationship}</Text> : null}
               </View>
-              <Pressable onPress={() => onDelete(item.contact_id)} style={styles.deleteButton}>
-                <MaterialIcons name="close" size={16} color="#DC2626" />
-              </Pressable>
+              <View style={styles.rowActions}>
+                <Pressable onPress={() => startEdit(item)} style={styles.editButton}>
+                  <MaterialIcons name="edit" size={16} color="#0F172A" />
+                </Pressable>
+                <Pressable onPress={() => onDelete(item.contact_id)} style={styles.deleteButton}>
+                  <MaterialIcons name="close" size={16} color="#DC2626" />
+                </Pressable>
+              </View>
             </View>
             <View style={styles.contactLine}>
               <MaterialIcons name="call" size={16} color="#94A3B8" />
@@ -230,6 +272,21 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '600',
   },
+  formActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  ghostButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+  },
+  ghostButtonText: {
+    color: '#0F172A',
+    fontWeight: '600',
+  },
   buttonDisabled: { opacity: 0.6 },
   contactRow: {
     flexDirection: 'row',
@@ -314,6 +371,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FEE2E2',
+  },
+  editButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E2E8F0',
+  },
+  rowActions: {
+    flexDirection: 'row',
+    gap: 6,
   },
   emptyText: {
     color: '#94A3B8',

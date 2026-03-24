@@ -29,5 +29,9 @@ Thumbs.db
 # Generated / temp
 figma-zip/
 docx_tmp/
+# Local PDF text extraction
+_pdf_extract.txt
+# NPM cache
+backend/.npm-cache/
 # Archives
 docx_tmp.zip

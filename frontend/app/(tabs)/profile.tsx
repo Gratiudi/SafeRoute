@@ -1,11 +1,20 @@
-import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useAuth } from '@/lib/auth';
 import { authedApiFetch } from '@/lib/api';
 
 export default function ProfileScreen() {
   const { user, token, signOut } = useAuth();
+  const [editMode, setEditMode] = useState(false);
+  const [profile, setProfile] = useState({
+    full_name: user?.full_name ?? 'SafeRoute User',
+    email: user?.email ?? 'account@saferoute.app',
+    phone_number: '',
+  });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
   const [settings, setSettings] = useState({
     notifications: true,
     locationSharing: true,
@@ -19,6 +28,26 @@ export default function ProfileScreen() {
     sosUsed: 0,
   });
   const [statsError, setStatsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    const loadProfile = async () => {
+      try {
+        setProfileError(null);
+        const data = await authedApiFetch('/api/profile', token);
+        if (data) {
+          setProfile({
+            full_name: data.full_name ?? '',
+            email: data.email ?? '',
+            phone_number: data.phone_number ?? '',
+          });
+        }
+      } catch (e: any) {
+        setProfileError(e?.message || 'Unable to load profile');
+      }
+    };
+    loadProfile();
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -52,39 +81,122 @@ export default function ProfileScreen() {
     loadStats();
   }, [token]);
 
+  const initials = useMemo(() => {
+    const base = profile.full_name || user?.full_name || 'SafeRoute';
+    return base
+      .split(' ')
+      .filter(Boolean)
+      .map((n) => n[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+  }, [profile.full_name, user?.full_name]);
+
+  const onSaveProfile = async () => {
+    if (!token) return;
+    setProfileSaving(true);
+    setProfileError(null);
+    try {
+      const updated = await authedApiFetch('/api/profile', token, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          full_name: profile.full_name.trim(),
+          email: profile.email.trim(),
+          phone_number: profile.phone_number.trim(),
+        }),
+      });
+      setProfile({
+        full_name: updated.full_name ?? profile.full_name,
+        email: updated.email ?? profile.email,
+        phone_number: updated.phone_number ?? profile.phone_number,
+      });
+      setEditMode(false);
+    } catch (e: any) {
+      setProfileError(e?.message || 'Unable to update profile');
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.profileCard}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {(user?.full_name ?? 'SafeRoute').split(' ').map((n) => n[0]).join('')}
-          </Text>
+          <Text style={styles.avatarText}>{initials}</Text>
         </View>
-        <Text style={styles.name}>{user?.full_name ?? 'SafeRoute User'}</Text>
-        <Text style={styles.email}>{user?.email ?? 'account@saferoute.app'}</Text>
-        <Pressable style={styles.outlineButton}>
-          <Text style={styles.outlineButtonText}>Edit Profile</Text>
+        <Text style={styles.name}>{profile.full_name || user?.full_name || 'SafeRoute User'}</Text>
+        <Text style={styles.email}>{profile.email || user?.email || 'account@saferoute.app'}</Text>
+        <Pressable style={styles.outlineButton} onPress={() => setEditMode((v) => !v)}>
+          <Text style={styles.outlineButtonText}>{editMode ? 'Close Edit' : 'Edit Profile'}</Text>
         </Pressable>
+        {profileError ? <Text style={styles.errorText}>{profileError}</Text> : null}
       </View>
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Personal Information</Text>
-        <View style={styles.infoRow}>
-          <MaterialIcons name="person" size={18} color="#94A3B8" />
-          <Text style={styles.infoText}>{user?.full_name ?? 'SafeRoute User'}</Text>
-        </View>
-        <View style={styles.infoRow}>
-          <MaterialIcons name="mail" size={18} color="#94A3B8" />
-          <Text style={styles.infoText}>{user?.email ?? 'account@saferoute.app'}</Text>
-        </View>
-        <View style={styles.infoRow}>
-          <MaterialIcons name="call" size={18} color="#94A3B8" />
-          <Text style={styles.infoText}>+251 95 987 6543</Text>
-        </View>
-        <View style={styles.infoRow}>
-          <MaterialIcons name="place" size={18} color="#94A3B8" />
-          <Text style={styles.infoText}>Addis Ababa, AA</Text>
-        </View>
+        {editMode ? (
+          <View style={styles.formBlock}>
+            <View style={styles.inputRow}>
+              <MaterialIcons name="person" size={18} color="#94A3B8" />
+              <TextInput
+                style={styles.input}
+                placeholder="Full name"
+                value={profile.full_name}
+                onChangeText={(value) => setProfile((prev) => ({ ...prev, full_name: value }))}
+              />
+            </View>
+            <View style={styles.inputRow}>
+              <MaterialIcons name="mail" size={18} color="#94A3B8" />
+              <TextInput
+                style={styles.input}
+                placeholder="Email"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={profile.email}
+                onChangeText={(value) => setProfile((prev) => ({ ...prev, email: value }))}
+              />
+            </View>
+            <View style={styles.inputRow}>
+              <MaterialIcons name="call" size={18} color="#94A3B8" />
+              <TextInput
+                style={styles.input}
+                placeholder="Phone"
+                keyboardType="phone-pad"
+                value={profile.phone_number}
+                onChangeText={(value) => setProfile((prev) => ({ ...prev, phone_number: value }))}
+              />
+            </View>
+            <Pressable
+              style={[styles.primaryButton, profileSaving && styles.buttonDisabled]}
+              onPress={onSaveProfile}
+              disabled={profileSaving}
+            >
+              <Text style={styles.primaryButtonText}>
+                {profileSaving ? 'Saving...' : 'Save Profile'}
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <>
+            <View style={styles.infoRow}>
+              <MaterialIcons name="person" size={18} color="#94A3B8" />
+              <Text style={styles.infoText}>{profile.full_name || user?.full_name || 'SafeRoute User'}</Text>
+            </View>
+            <View style={styles.infoRow}>
+              <MaterialIcons name="mail" size={18} color="#94A3B8" />
+              <Text style={styles.infoText}>{profile.email || user?.email || 'account@saferoute.app'}</Text>
+            </View>
+            <View style={styles.infoRow}>
+              <MaterialIcons name="call" size={18} color="#94A3B8" />
+              <Text style={styles.infoText}>{profile.phone_number || '—'}</Text>
+            </View>
+            <View style={styles.infoRow}>
+              <MaterialIcons name="place" size={18} color="#94A3B8" />
+              <Text style={styles.infoText}>Addis Ababa, AA</Text>
+            </View>
+          </>
+        )}
       </View>
 
       <View style={styles.card}>
@@ -234,6 +346,10 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontWeight: '600',
   },
+  errorText: {
+    color: '#DC2626',
+    fontSize: 12,
+  },
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
@@ -255,6 +371,34 @@ const styles = StyleSheet.create({
   infoText: {
     color: '#475569',
   },
+  formBlock: {
+    gap: 12,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#F8FAFC',
+  },
+  input: {
+    flex: 1,
+  },
+  primaryButton: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#7C3AED',
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  buttonDisabled: { opacity: 0.6 },
   settingRow: {
     flexDirection: 'row',
     alignItems: 'center',
