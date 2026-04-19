@@ -1,8 +1,25 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useAuth } from '@/lib/auth';
 import { authedApiFetch } from '@/lib/api';
+
+const isWeb = Platform.OS === 'web';
+let MapViewComponent: any = null;
+let MarkerComponent: any = null;
+let PolylineComponent: any = null;
+
+if (!isWeb) {
+  const maps = require('react-native-maps');
+  MapViewComponent = maps.default;
+  MarkerComponent = maps.Marker;
+  PolylineComponent = maps.Polyline;
+}
+
+type RouteGeometry = {
+  type: string;
+  coordinates: [number, number][];
+};
 
 type ApiRoute = {
   id: string;
@@ -10,6 +27,7 @@ type ApiRoute = {
   distance_km: number;
   duration_min: number;
   safety_score: number;
+  geometry?: RouteGeometry;
 };
 
 type TimeOfDay = 'day' | 'night' | 'auto';
@@ -33,6 +51,34 @@ export default function RoutesScreen() {
       return route.safety_score > best.safety_score ? route : best;
     }, routes[0]).id;
   }, [routes]);
+
+  const selectedRoute = useMemo(() => {
+    if (!routes.length) return null;
+    return routes.find((route) => route.id === bestRouteId) ?? routes[0];
+  }, [routes, bestRouteId]);
+
+  const lineCoords = useMemo(() => {
+    const coords = selectedRoute?.geometry?.coordinates;
+    if (!coords || !Array.isArray(coords)) return [];
+    return coords
+      .map(([lng, lat]) => ({ latitude: lat, longitude: lng }))
+      .filter((point) => Number.isFinite(point.latitude) && Number.isFinite(point.longitude));
+  }, [selectedRoute]);
+
+  const mapRegion = useMemo(() => {
+    if (!lineCoords.length) return null;
+    const lats = lineCoords.map((c) => c.latitude);
+    const lngs = lineCoords.map((c) => c.longitude);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const latitude = (minLat + maxLat) / 2;
+    const longitude = (minLng + maxLng) / 2;
+    const latitudeDelta = Math.max(0.01, (maxLat - minLat) * 1.4);
+    const longitudeDelta = Math.max(0.01, (maxLng - minLng) * 1.4);
+    return { latitude, longitude, latitudeDelta, longitudeDelta };
+  }, [lineCoords]);
 
   const handleSearch = async () => {
     if (!token) {
@@ -140,6 +186,29 @@ export default function RoutesScreen() {
               <Text style={styles.badgeText}>Safe</Text>
             </View>
           </View>
+
+          {lineCoords.length > 0 && mapRegion && !isWeb && MapViewComponent ? (
+            <View style={styles.mapCard}>
+              <Text style={styles.sectionTitle}>Route Preview</Text>
+              <MapViewComponent
+                key={`${selectedRoute?.id}-${lineCoords.length}`}
+                style={styles.map}
+                initialRegion={mapRegion}
+                showsUserLocation
+              >
+                <PolylineComponent coordinates={lineCoords} strokeColor="#7C3AED" strokeWidth={4} />
+                <MarkerComponent coordinate={lineCoords[0]} title="Start" />
+                <MarkerComponent coordinate={lineCoords[lineCoords.length - 1]} title="End" />
+              </MapViewComponent>
+            </View>
+          ) : (
+            <View style={styles.mapHint}>
+              <MaterialIcons name="map" size={16} color="#94A3B8" />
+              <Text style={styles.mapHintText}>
+                Map preview is available when route geometry is provided.
+              </Text>
+            </View>
+          )}
 
           {routes.map((route) => (
             <View key={route.id} style={styles.routeCard}>
@@ -419,6 +488,32 @@ const styles = StyleSheet.create({
   placeholderText: {
     color: '#64748B',
     textAlign: 'center',
+  },
+  mapCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  map: {
+    width: '100%',
+    height: 240,
+    borderRadius: 12,
+  },
+  mapHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+  },
+  mapHintText: {
+    color: '#64748B',
+    fontSize: 12,
   },
   errorText: {
     color: '#DC2626',
