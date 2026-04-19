@@ -42,19 +42,38 @@ async function fetchJson(url) {
 }
 
 async function mapboxGeocode(name) {
-  if (!MAPBOX_TOKEN) return null;
-  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
+  if (MAPBOX_TOKEN) {
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
+      name
+    )}.json?limit=1&access_token=${MAPBOX_TOKEN}`;
+    const data = await fetchJson(url);
+    const feature = data?.features?.[0];
+    if (!feature || !Array.isArray(feature.center)) return null;
+    return { lng: feature.center[0], lat: feature.center[1] };
+  }
+
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(
     name
-  )}.json?limit=1&access_token=${MAPBOX_TOKEN}`;
-  const data = await fetchJson(url);
-  const feature = data?.features?.[0];
-  if (!feature || !Array.isArray(feature.center)) return null;
-  return { lng: feature.center[0], lat: feature.center[1] };
+  )}`;
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "SafeRoute/1.0 (student project)",
+    },
+  });
+  if (!response.ok) return null;
+  const data = await response.json();
+  const first = data?.[0];
+  if (!first) return null;
+  return { lng: Number(first.lon), lat: Number(first.lat) };
 }
 
 async function mapboxDirections(start, end) {
-  if (!MAPBOX_TOKEN) return null;
-  const url = `https://api.mapbox.com/directions/v5/mapbox/walking/${start.lng},${start.lat};${end.lng},${end.lat}?geometries=geojson&overview=full&alternatives=true&access_token=${MAPBOX_TOKEN}`;
+  if (MAPBOX_TOKEN) {
+    const url = `https://api.mapbox.com/directions/v5/mapbox/walking/${start.lng},${start.lat};${end.lng},${end.lat}?geometries=geojson&overview=full&alternatives=true&access_token=${MAPBOX_TOKEN}`;
+    return fetchJson(url);
+  }
+
+  const url = `https://router.project-osrm.org/route/v1/foot/${start.lng},${start.lat};${end.lng},${end.lat}?geometries=geojson&overview=full&alternatives=true`;
   return fetchJson(url);
 }
 
@@ -1182,7 +1201,7 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
     end = await mapboxGeocode(end_location_name);
   }
 
-  if (!MAPBOX_TOKEN || !start || !end) {
+  if (!start || !end) {
     const safestRouteScore = clamp(baseScore + 0.05, 0, 1);
     const fastestRouteScore = clamp(baseScore - 0.05, 0, 1);
 
@@ -1206,7 +1225,7 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
           safety_score: fastestRouteScore,
         },
       ],
-      note: "Mapbox not configured or coordinates missing; returned a placeholder plan.",
+      note: "Coordinates missing or geocoding failed; returned a placeholder plan.",
     });
   }
 
@@ -1228,13 +1247,20 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
       end,
       time_of_day: time_of_day || null,
       routes,
+      note: MAPBOX_TOKEN
+        ? null
+        : "Using OpenStreetMap (Nominatim + OSRM) for routing.",
     });
   } catch (err) {
-    console.error("Mapbox error:", err);
-    return res.status(502).json({ error: "Failed to fetch routes from Mapbox." });
+    console.error("Routing provider error:", err);
+    return res
+      .status(502)
+      .json({ error: "Failed to fetch routes from the routing provider." });
   }
 });
 
-app.listen(port, () => {
-  console.log(`Backend running on http://localhost:${port}`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Backend running on http://0.0.0.0:${port}`);
 });
+
+
