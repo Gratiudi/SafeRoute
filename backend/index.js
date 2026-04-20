@@ -876,11 +876,10 @@ app.get("/api/sos/history", requireAuth, async (req, res) => {
 
   const alertIds = alerts.map((a) => a.alert_id);
 
-  const { data: evidenceAgg, error: evError } = await supabase
+  const { data: evidenceRows, error: evError } = await supabase
     .from("emergency_evidence")
-    .select("alert_id, count:evidence_id")
-    .in("alert_id", alertIds)
-    .group("alert_id");
+    .select("alert_id")
+    .in("alert_id", alertIds);
 
   if (evError) {
     console.error("Supabase error:", evError);
@@ -888,8 +887,8 @@ app.get("/api/sos/history", requireAuth, async (req, res) => {
   }
 
   const countsByAlert = new Map();
-  (evidenceAgg || []).forEach((row) => {
-    countsByAlert.set(row.alert_id, row.count);
+  (evidenceRows || []).forEach((row) => {
+    countsByAlert.set(row.alert_id, (countsByAlert.get(row.alert_id) || 0) + 1);
   });
 
   const result = alerts.map((a) => ({

@@ -18,8 +18,18 @@ export default function HomeScreen() {
   const [mediumExpiresAt, setMediumExpiresAt] = useState<string | null>(null);
   const [mediumRemaining, setMediumRemaining] = useState<number | null>(null);
   const [mediumEscalating, setMediumEscalating] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [smsWarning, setSmsWarning] = useState<string | null>(null);
+  const [mediumDuration, setMediumDuration] = useState(60);
+  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [alerts, setAlerts] = useState<any[]>([]);
 
   const mediumActive = useMemo(() => !!mediumAlertId && !!mediumExpiresAt, [mediumAlertId, mediumExpiresAt]);
+
+  useEffect(() => {
+    if (!token) return;
+    void fetchAlertHistory();
+  }, [token]);
 
   useEffect(() => {
     if (!mediumExpiresAt) return;
@@ -52,16 +62,41 @@ export default function HomeScreen() {
     setMediumEscalating(false);
   };
 
+  const showStatus = (message: string) => {
+    setStatusMessage(message);
+    setTimeout(() => setStatusMessage(null), 4000);
+  };
+
+  const fetchAlertHistory = async () => {
+    if (!token || alertsLoading) return;
+    setAlertsLoading(true);
+    try {
+      const data = await authedApiFetch('/api/sos/history', token);
+      setAlerts(Array.isArray(data) ? data : []);
+    } catch {
+      // ignore history fetch failures for now
+    } finally {
+      setAlertsLoading(false);
+    }
+  };
+
   const handleStartSos = async () => {
     if (!token || sosLoading) return;
     setSosError(null);
     setSosLoading(true);
+    setSmsWarning(null);
     try {
-      await authedApiFetch('/api/sos/start', token, {
+      const result = await authedApiFetch('/api/sos/start', token, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: 'SOS' }),
       });
+      const sms = Array.isArray(result?.sms) ? result.sms : [];
+      if (!sms.length) {
+        setSmsWarning('SOS created, but no SMS sent. Add contacts and check Twilio settings.');
+      }
+      showStatus('SOS alert created.');
+      void fetchAlertHistory();
       setEmergencyOpen(false);
     } catch (error: any) {
       setSosError(error?.message || 'Failed to start SOS');
@@ -74,14 +109,17 @@ export default function HomeScreen() {
     if (!token || mediumLoading) return;
     setMediumError(null);
     setMediumLoading(true);
+    setSmsWarning(null);
     try {
       const result = await authedApiFetch('/api/medium/start', token, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ duration_seconds: 60 }),
+        body: JSON.stringify({ duration_seconds: mediumDuration }),
       });
       setMediumAlertId(result.alert_id);
       setMediumExpiresAt(result.expires_at);
+      showStatus('Check-in timer started.');
+      void fetchAlertHistory();
     } catch (error: any) {
       setMediumError(error?.message || 'Failed to start timer');
     } finally {
@@ -100,6 +138,8 @@ export default function HomeScreen() {
         body: JSON.stringify({ alert_id: mediumAlertId }),
       });
       resetMediumState();
+      showStatus('Marked safe.');
+      void fetchAlertHistory();
       setMediumOpen(false);
     } catch (error: any) {
       setMediumError(error?.message || 'Unable to confirm safety');
@@ -119,6 +159,8 @@ export default function HomeScreen() {
         body: JSON.stringify({ alert_id: mediumAlertId }),
       });
       resetMediumState();
+      showStatus('Escalated to SOS.');
+      void fetchAlertHistory();
       setMediumOpen(false);
     } catch (error: any) {
       setMediumError(error?.message || 'Escalation failed');
@@ -175,6 +217,29 @@ export default function HomeScreen() {
           <MaterialIcons name="warning" size={20} color="#EA580C" />
           <Text style={styles.mediumText}>I Feel Unsafe</Text>
         </Pressable>
+        {statusMessage ? <Text style={styles.statusMessage}>{statusMessage}</Text> : null}
+        {smsWarning ? <Text style={styles.smsWarning}>{smsWarning}</Text> : null}
+      </View>
+
+      <View style={styles.historyCard}>
+        <View style={styles.historyHeader}>
+          <Text style={styles.historyTitle}>Recent Alerts</Text>
+          <Pressable onPress={fetchAlertHistory} disabled={alertsLoading}>
+            <Text style={styles.historyRefresh}>{alertsLoading ? 'Refreshing...' : 'Refresh'}</Text>
+          </Pressable>
+        </View>
+        {alerts.length === 0 ? (
+          <Text style={styles.historyEmpty}>No alerts yet.</Text>
+        ) : (
+          alerts.slice(0, 5).map((alert) => (
+            <View key={alert.alert_id} style={styles.historyRow}>
+              <Text style={styles.historyType}>{alert.type}</Text>
+              <Text style={styles.historyMeta}>
+                {alert.status} • {new Date(alert.timestamp).toLocaleString()}
+              </Text>
+            </View>
+          ))
+        )}
       </View>
 
       <Modal transparent visible={emergencyOpen} animationType="fade" onRequestClose={() => setEmergencyOpen(false)}>
@@ -208,6 +273,26 @@ export default function HomeScreen() {
             <Text style={styles.modalBody}>
               We will monitor your location and ask for a check-in. Escalate to SOS if needed.
             </Text>
+            {!mediumActive ? (
+              <View style={styles.durationBlock}>
+                <Text style={styles.durationLabel}>Set check-in timer</Text>
+                <View style={styles.durationControls}>
+                  <Pressable
+                    style={styles.durationButton}
+                    onPress={() => setMediumDuration((prev) => Math.max(15, prev - 15))}
+                  >
+                    <Text style={styles.durationButtonText}>-15s</Text>
+                  </Pressable>
+                  <Text style={styles.durationValue}>{formatCountdown(mediumDuration)}</Text>
+                  <Pressable
+                    style={styles.durationButton}
+                    onPress={() => setMediumDuration((prev) => Math.min(300, prev + 15))}
+                  >
+                    <Text style={styles.durationButtonText}>+15s</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
             {mediumActive ? (
               <View style={styles.timerBlock}>
                 <Text style={styles.timerLabel}>Check-in timer</Text>
@@ -301,6 +386,16 @@ const styles = StyleSheet.create({
   sosArea: {
     gap: 12,
     marginTop: 12,
+  },
+  statusMessage: {
+    color: '#0F172A',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  smsWarning: {
+    color: '#B45309',
+    fontSize: 12,
+    textAlign: 'center',
   },
   sosButton: {
     flexDirection: 'row',
@@ -399,6 +494,40 @@ const styles = StyleSheet.create({
     color: '#DC2626',
     fontSize: 12,
   },
+  durationBlock: {
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 8,
+  },
+  durationLabel: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  durationControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  durationButton: {
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#E2E8F0',
+  },
+  durationButtonText: {
+    color: '#0F172A',
+    fontWeight: '600',
+  },
+  durationValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
   timerBlock: {
     borderRadius: 12,
     paddingVertical: 12,
@@ -420,6 +549,44 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#EA580C',
+  },
+  historyCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 10,
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  historyTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  historyRefresh: {
+    color: '#2563EB',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  historyEmpty: {
+    color: '#64748B',
+    fontSize: 12,
+  },
+  historyRow: {
+    gap: 4,
+  },
+  historyType: {
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  historyMeta: {
+    color: '#64748B',
+    fontSize: 12,
   },
 });
 
