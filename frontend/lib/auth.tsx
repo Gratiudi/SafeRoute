@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/lib/api';
+import { onAuthExpired } from '@/lib/authEvents';
 import { clearToken, getToken, setToken } from '@/lib/authStorage';
 
 type AuthUser = {
@@ -31,6 +32,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     };
     bootstrap();
+  }, []);
+
+  useEffect(() => {
+    return onAuthExpired(() => {
+      void (async () => {
+        await clearToken();
+        setTokenState(null);
+        setUser(null);
+      })();
+    });
   }, []);
 
   const value = useMemo<AuthState>(() => {

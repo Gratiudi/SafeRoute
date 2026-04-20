@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { emitAuthExpired } from '@/lib/authEvents';
 
 function defaultBaseUrl() {
   // Web runs on your PC, so localhost works.
@@ -10,6 +11,16 @@ function defaultBaseUrl() {
 }
 
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? defaultBaseUrl();
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
 
 export async function apiFetch(path: string, init?: RequestInit) {
   const url = `${API_BASE_URL}${path}`;
@@ -25,7 +36,7 @@ export async function apiFetch(path: string, init?: RequestInit) {
 
   if (!res.ok) {
     const message = json?.error || json?.message || `HTTP ${res.status}`;
-    throw new Error(message);
+    throw new ApiError(message, res.status);
   }
 
   return json;
@@ -37,6 +48,13 @@ export async function authedApiFetch(path: string, token: string, init?: Request
     Authorization: `Bearer ${token}`,
   } as Record<string, string>;
 
-  return apiFetch(path, { ...(init || {}), headers });
+  try {
+    return await apiFetch(path, { ...(init || {}), headers });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      emitAuthExpired();
+    }
+    throw error;
+  }
 }
 
