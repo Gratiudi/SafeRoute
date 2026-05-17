@@ -35,3 +35,6 @@ _pdf_extract.txt
 backend/.npm-cache/
 # Archives
 docx_tmp.zip
+
+# Android local machine config
+frontend/android/local.properties
