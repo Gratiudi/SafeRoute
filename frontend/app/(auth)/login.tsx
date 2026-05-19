@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Link, useRouter } from 'expo-router';
 import { useAuth } from '@/lib/auth';
+import { apiFetch } from '@/lib/api';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -25,13 +26,11 @@ export default function LoginScreen() {
     setSubmitting(true);
     try {
       if (email.trim().startsWith('+')) {
-        const res = await fetch('http://localhost:4000/api/auth/send-otp', {
+        await apiFetch('/api/auth/send-otp', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ phone_number: email.trim() }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to send OTP');
         setStep('otp');
       } else {
         await signIn(email.trim(), password);
@@ -48,13 +47,11 @@ export default function LoginScreen() {
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch('http://localhost:4000/api/auth/verify-otp', {
+      await apiFetch('/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone_number: email.trim(), otp: otp.trim() }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Invalid OTP');
 
       await signIn(email.trim(), password);
       router.replace('/(tabs)');
@@ -73,7 +70,11 @@ export default function LoginScreen() {
         </Pressable>
         <View style={styles.brand}>
           <View style={styles.brandIcon}>
-            <MaterialIcons name="security" size={16} color="#FFFFFF" />
+            <Image
+              source={require('../../assets/images/logo.png')}
+              style={styles.brandLogo}
+              resizeMode="contain"
+            />
           </View>
           <Text style={styles.brandText}>Login</Text>
         </View>
@@ -184,12 +185,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   brandIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#7C3AED',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  brandLogo: {
+    width: 28,
+    height: 28,
   },
   brandText: {
     fontSize: 18,
