@@ -4,9 +4,8 @@ import { emitAuthExpired } from '@/lib/authEvents';
 function defaultBaseUrl() {
   // Web runs on your PC, so localhost works.
   if (Platform.OS === 'web') return 'http://localhost:4000';
-  // Android emulator uses 10.0.2.2 to reach your PC.
+  // ⚠️ 10.0.2.2 is EMULATOR only. Real phone needs EXPO_PUBLIC_API_BASE_URL set.
   if (Platform.OS === 'android') return 'http://10.0.2.2:4000';
-  // iOS simulator can use localhost to reach your Mac; on Windows you likely won't use iOS.
   return 'http://localhost:4000';
 }
 

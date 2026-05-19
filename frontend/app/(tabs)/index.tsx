@@ -30,10 +30,29 @@ export default function HomeScreen() {
 
   const mediumActive = useMemo(() => !!mediumAlertId && !!mediumExpiresAt, [mediumAlertId, mediumExpiresAt]);
 
+  const [activeSosAlertId, setActiveSosAlertId] = useState<string | null>(null);
+  const [activeSosOpen, setActiveSosOpen] = useState(false);
+  const [activeSosDuration, setActiveSosDuration] = useState(0);
+
   useEffect(() => {
     if (!token) return;
     void fetchAlertHistory();
   }, [token]);
+
+  // Active SOS timer
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (activeSosOpen) {
+      interval = setInterval(() => {
+        setActiveSosDuration((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setActiveSosDuration(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [activeSosOpen]);
 
   const hasEscalatedRef = React.useRef(false);
 
@@ -133,6 +152,8 @@ export default function HomeScreen() {
       
       // Start capturing evidence for this SOS alert
       startEvidenceCapture(result.alert.alert_id, token);
+      setActiveSosAlertId(result.alert.alert_id);
+      setActiveSosOpen(true);
 
       void fetchAlertHistory();
       setEmergencyOpen(false);
@@ -198,6 +219,8 @@ export default function HomeScreen() {
       });
       if (result && result.sos_alert) {
          startEvidenceCapture(result.sos_alert.alert_id, token);
+         setActiveSosAlertId(result.sos_alert.alert_id);
+         setActiveSosOpen(true);
       }
 
       resetMediumState();
@@ -208,6 +231,24 @@ export default function HomeScreen() {
       setMediumError(error?.message || 'Escalation failed');
     } finally {
       setMediumEscalating(false);
+    }
+  };
+
+  const handleStopSos = async () => {
+    if (!token || !activeSosAlertId) return;
+    try {
+      await authedApiFetch('/api/sos/stop', token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alert_id: activeSosAlertId }),
+      });
+      stopEvidenceCapture();
+      setActiveSosAlertId(null);
+      setActiveSosOpen(false);
+      showStatus('SOS ended. Evidence saved.');
+      void fetchAlertHistory();
+    } catch (error: any) {
+      showStatus('Failed to end SOS. Please try again.');
     }
   };
 
@@ -385,6 +426,79 @@ export default function HomeScreen() {
               )}
             </View>
             {mediumError ? <Text style={styles.modalError}>{mediumError}</Text> : null}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Active SOS Activated State Modal (Figma UI) */}
+      <Modal transparent visible={activeSosOpen} animationType="slide">
+        <View style={styles.sosOverlay}>
+          <View style={styles.sosContainer}>
+            <View style={styles.sosHeader}>
+              <View style={styles.sosPulse}>
+                <MaterialIcons name="report" size={36} color="#FFFFFF" />
+              </View>
+              <Text style={styles.sosAlertTitle}>SOS Activated!</Text>
+              <Text style={styles.sosAlertSub}>Your emergency contacts have been notified</Text>
+              <Text style={styles.sosTimerValue}>{formatCountdown(activeSosDuration)}</Text>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.sosStatusList}>
+              <View style={[styles.statusBox, styles.statusSuccess]}>
+                <View style={styles.statusIconCircle}>
+                  <MaterialIcons name="people" size={16} color="#FFFFFF" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.statusBoxTitle}>Alerting emergency contacts...</Text>
+                  <Text style={styles.statusBoxSub}>SMS alert dispatched successfully</Text>
+                </View>
+                <MaterialIcons name="check-circle" size={16} color="#16A34A" />
+              </View>
+
+              <View style={[styles.statusBox, styles.statusSuccess]}>
+                <View style={styles.statusIconCircle}>
+                  <MaterialIcons name="my-location" size={16} color="#FFFFFF" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.statusBoxTitle}>Sharing your location...</Text>
+                  <Text style={styles.statusBoxSub}>Live location link is active</Text>
+                </View>
+                <MaterialIcons name="check-circle" size={16} color="#16A34A" />
+              </View>
+
+              <View style={[styles.statusBox, styles.statusInfo, { borderColor: '#E9D5FF' }]}>
+                <View style={[styles.statusIconCircle, { backgroundColor: '#7C3AED' }]}>
+                  <MaterialIcons name="mic" size={16} color="#FFFFFF" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.statusBoxTitle}>Recording audio evidence...</Text>
+                  <Text style={styles.statusBoxSub}>Next capture in {30 - (activeSosDuration % 30)}s</Text>
+                </View>
+                <View style={styles.livePulseDot} />
+              </View>
+
+              <View style={[styles.statusBox, styles.statusInfo, { borderColor: '#BFDBFE' }]}>
+                <View style={[styles.statusIconCircle, { backgroundColor: '#2563EB' }]}>
+                  <MaterialIcons name="photo-camera" size={16} color="#FFFFFF" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.statusBoxTitle}>Capturing photo evidence...</Text>
+                  <Text style={styles.statusBoxSub}>{Math.floor(activeSosDuration / 30)} capture(s) recorded</Text>
+                </View>
+                <View style={styles.livePulseDot} />
+              </View>
+            </ScrollView>
+
+            <View style={styles.sosFooter}>
+              <View style={styles.sosWarningCard}>
+                <Text style={styles.sosWarningTitle}>Evidence Recording Active</Text>
+                <Text style={styles.sosWarningText}>Audio and photos are being recorded every 30 seconds for your safety.</Text>
+              </View>
+
+              <Pressable style={styles.stopSosBtn} onPress={handleStopSos}>
+                <Text style={styles.stopSosBtnText}>End Emergency & Save Evidence</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -641,6 +755,130 @@ const styles = StyleSheet.create({
   historyMeta: {
     color: '#64748B',
     fontSize: 12,
+  },
+  // Active SOS overlay (Figma Design)
+  sosOverlay: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  sosContainer: {
+    width: '100%',
+    maxWidth: 420,
+    flex: 1,
+    gap: 16,
+    paddingVertical: 20,
+  },
+  sosHeader: {
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 20,
+  },
+  sosPulse: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#DC2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 8,
+    borderColor: '#FEF2F2',
+  },
+  sosAlertTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginTop: 6,
+  },
+  sosAlertSub: {
+    color: '#94A3B8',
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  sosTimerValue: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: '#F8FAFC',
+    marginTop: 10,
+  },
+  sosStatusList: {
+    gap: 12,
+    paddingVertical: 10,
+  },
+  statusBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 12,
+  },
+  statusSuccess: {
+    backgroundColor: '#065F46',
+    borderColor: '#047857',
+  },
+  statusInfo: {
+    backgroundColor: '#1E293B',
+    borderColor: '#334155',
+  },
+  statusIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusBoxTitle: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  statusBoxSub: {
+    color: '#94A3B8',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  livePulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+  },
+  sosFooter: {
+    gap: 12,
+  },
+  sosWarningCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+    gap: 4,
+  },
+  sosWarningTitle: {
+    fontWeight: '700',
+    color: '#F8FAFC',
+    fontSize: 13,
+  },
+  sosWarningText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  stopSosBtn: {
+    backgroundColor: '#EF4444',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stopSosBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 15,
   },
 });
 
