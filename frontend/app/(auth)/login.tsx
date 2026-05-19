@@ -13,14 +13,49 @@ export default function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const [step, setStep] = useState<'details' | 'otp'>('details');
+  const [otp, setOtp] = useState('');
+
   useEffect(() => {
     if (token) router.replace('/(tabs)');
   }, [token, router]);
 
-  const onLogin = async () => {
+  const onSendOtp = async () => {
     setError(null);
     setSubmitting(true);
     try {
+      if (email.trim().startsWith('+')) {
+        const res = await fetch('http://localhost:4000/api/auth/send-otp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone_number: email.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to send OTP');
+        setStep('otp');
+      } else {
+        await signIn(email.trim(), password);
+        router.replace('/(tabs)');
+      }
+    } catch (e: any) {
+      setError(e?.message ?? 'Login failed');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const onVerifyOtpAndLogin = async () => {
+    setError(null);
+    setSubmitting(true);
+    try {
+      const res = await fetch('http://localhost:4000/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone_number: email.trim(), otp: otp.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Invalid OTP');
+
       await signIn(email.trim(), password);
       router.replace('/(tabs)');
     } catch (e: any) {
@@ -50,36 +85,59 @@ export default function LoginScreen() {
       </View>
 
       <View style={styles.form}>
-        <View style={styles.field}>
-          <Text style={styles.label}>Email Address</Text>
-          <TextInput
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            placeholder="email@example.com"
-            style={styles.input}
-          />
-        </View>
+        {step === 'details' ? (
+          <>
+            <View style={styles.field}>
+              <Text style={styles.label}>Email Address or Phone (+...)</Text>
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                placeholder="email@example.com or +251..."
+                style={styles.input}
+              />
+            </View>
 
-        <View style={styles.field}>
-          <View style={styles.passwordRow}>
-            <Text style={styles.label}>Password</Text>
-            <Pressable>
-              <Text style={styles.forgotText}>Forgot?</Text>
+            <View style={styles.field}>
+              <View style={styles.passwordRow}>
+                <Text style={styles.label}>Password</Text>
+                <Pressable>
+                  <Text style={styles.forgotText}>Forgot?</Text>
+                </Pressable>
+              </View>
+              <TextInput value={password} onChangeText={setPassword} secureTextEntry style={styles.input} />
+            </View>
+
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+
+            <Pressable
+              style={[styles.primaryButton, submitting && styles.buttonDisabled]}
+              onPress={onSendOtp}
+              disabled={submitting}>
+              <Text style={styles.primaryButtonText}>{submitting ? 'Please wait...' : 'Login'}</Text>
             </Pressable>
-          </View>
-          <TextInput value={password} onChangeText={setPassword} secureTextEntry style={styles.input} />
-        </View>
+          </>
+        ) : (
+          <>
+            <View style={styles.field}>
+              <Text style={styles.label}>Enter 6-digit OTP</Text>
+              <TextInput value={otp} onChangeText={setOtp} keyboardType="number-pad" maxLength={6} style={styles.input} />
+            </View>
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+            {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <Pressable
-          style={[styles.primaryButton, submitting && styles.buttonDisabled]}
-          onPress={onLogin}
-          disabled={submitting}>
-          <Text style={styles.primaryButtonText}>{submitting ? 'Signing In...' : 'Login'}</Text>
-        </Pressable>
+            <Pressable
+              style={[styles.primaryButton, submitting && styles.buttonDisabled]}
+              onPress={onVerifyOtpAndLogin}
+              disabled={submitting}>
+              <Text style={styles.primaryButtonText}>{submitting ? 'Verifying...' : 'Verify & Login'}</Text>
+            </Pressable>
+            <Pressable onPress={() => setStep('details')} style={{ marginTop: 10 }}>
+              <Text style={styles.footerText}>Back to details</Text>
+            </Pressable>
+          </>
+        )}
       </View>
 
       <View style={styles.demoCard}>

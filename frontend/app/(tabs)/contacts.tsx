@@ -61,6 +61,13 @@ export default function ContactsScreen() {
       Alert.alert('Missing info', 'Name and phone are required');
       return;
     }
+    
+    const phoneRegex = /^\+[1-9]\d{1,14}$/;
+    if (!phoneRegex.test(phone.trim())) {
+      Alert.alert('Invalid phone', 'Must be E.164 format (e.g., +251...)');
+      return;
+    }
+
     try {
       setSaving(true);
       if (editingId) {

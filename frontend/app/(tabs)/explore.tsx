@@ -39,6 +39,12 @@ export default function RoutesScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [navigatingRouteId, setNavigatingRouteId] = useState<string | null>(null);
+  const [showRatingModal, setShowRatingModal] = useState(false);
+  const [ratingScore, setRatingScore] = useState<number>(5);
+  const [ratingComment, setRatingComment] = useState("");
+  const [submittingRating, setSubmittingRating] = useState(false);
 
   const showRoutes = routes.length > 0;
 
@@ -149,6 +155,40 @@ export default function RoutesScreen() {
       setRoutes([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleStartNavigation = (routeId: string) => {
+    setNavigatingRouteId(routeId);
+    setIsNavigating(true);
+  };
+
+  const handleFinishNavigation = () => {
+    setIsNavigating(false);
+    setShowRatingModal(true);
+  };
+
+  const submitRating = async () => {
+    if (!token || !navigatingRouteId) return;
+    setSubmittingRating(true);
+    try {
+      await authedApiFetch("/api/ratings", token, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          route_id: navigatingRouteId,
+          score: ratingScore,
+          comment: ratingComment.trim() || undefined,
+        }),
+      });
+    } catch (e: any) {
+      console.error(e);
+    } finally {
+      setSubmittingRating(false);
+      setShowRatingModal(false);
+      setNavigatingRouteId(null);
+      setRatingScore(5);
+      setRatingComment("");
     }
   };
 
@@ -333,9 +373,15 @@ export default function RoutesScreen() {
                 </View>
               </View>
 
-              <Pressable style={styles.primaryButton}>
-                <Text style={styles.primaryButtonText}>Start Navigation</Text>
-              </Pressable>
+              {isNavigating && navigatingRouteId === route.id ? (
+                <Pressable style={[styles.primaryButton, { backgroundColor: '#DC2626' }]} onPress={handleFinishNavigation}>
+                  <Text style={styles.primaryButtonText}>Finish Navigation</Text>
+                </Pressable>
+              ) : !isNavigating ? (
+                <Pressable style={styles.primaryButton} onPress={() => handleStartNavigation(route.id)}>
+                  <Text style={styles.primaryButtonText}>Start Navigation</Text>
+                </Pressable>
+              ) : null}
             </View>
           ))}
         </View>
@@ -345,6 +391,40 @@ export default function RoutesScreen() {
           <Text style={styles.placeholderText}>
             Enter a destination to view safe routes
           </Text>
+        </View>
+      )}
+
+      {showRatingModal && (
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Rate Your Route</Text>
+            <Text style={styles.modalBody}>How safe did you feel on this route?</Text>
+            
+            <View style={styles.ratingStars}>
+              {[1, 2, 3, 4, 5].map((s) => (
+                <Pressable key={s} onPress={() => setRatingScore(s)}>
+                  <MaterialIcons name="star" size={32} color={s <= ratingScore ? '#EAB308' : '#E2E8F0'} />
+                </Pressable>
+              ))}
+            </View>
+            
+            <TextInput
+              style={[styles.input, { minHeight: 80, marginTop: 12 }]}
+              placeholder="Any comments about safety? (optional)"
+              value={ratingComment}
+              onChangeText={setRatingComment}
+              multiline
+            />
+            
+            <View style={styles.modalActions}>
+              <Pressable onPress={() => setShowRatingModal(false)} style={styles.modalButtonGhost} disabled={submittingRating}>
+                <Text style={styles.modalButtonGhostText}>Skip</Text>
+              </Pressable>
+              <Pressable onPress={submitRating} style={styles.modalButtonPrimary} disabled={submittingRating}>
+                <Text style={styles.modalButtonPrimaryText}>{submittingRating ? 'Submitting...' : 'Submit Rating'}</Text>
+              </Pressable>
+            </View>
+          </View>
         </View>
       )}
     </ScrollView>
@@ -479,4 +559,28 @@ const styles = StyleSheet.create({
   mapHintText: { color: "#64748B", fontSize: 12 },
   errorText: { color: "#DC2626", fontSize: 12 },
   noteText: { color: "#475569", fontSize: 12 },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    zIndex: 100,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#FFFFFF',
+    padding: 20,
+    borderRadius: 16,
+    gap: 12,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A', textAlign: 'center' },
+  modalBody: { color: '#475569', fontSize: 14, textAlign: 'center' },
+  ratingStars: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginVertical: 8 },
+  modalActions: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginTop: 12 },
+  modalButtonGhost: { flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: '#F1F5F9', alignItems: 'center' },
+  modalButtonGhostText: { color: '#0F172A', fontWeight: '600' },
+  modalButtonPrimary: { flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: '#7C3AED', alignItems: 'center' },
+  modalButtonPrimaryText: { color: '#FFFFFF', fontWeight: '600' },
 });

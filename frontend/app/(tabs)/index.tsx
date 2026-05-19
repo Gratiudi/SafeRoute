@@ -4,9 +4,12 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/lib/auth';
 import { authedApiFetch } from '@/lib/api';
+import { startEvidenceCapture, stopEvidenceCapture } from '@/lib/evidence';
+import { useI18n } from '@/lib/i18n';
 
 export default function HomeScreen() {
   const { user, token } = useAuth();
+  const { t, formatTimestamp } = useI18n();
   const router = useRouter();
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [mediumOpen, setMediumOpen] = useState(false);
@@ -23,6 +26,7 @@ export default function HomeScreen() {
   const [mediumDuration, setMediumDuration] = useState(60);
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [alerts, setAlerts] = useState<any[]>([]);
+  const [sosCountdown, setSosCountdown] = useState<number | null>(null);
 
   const mediumActive = useMemo(() => !!mediumAlertId && !!mediumExpiresAt, [mediumAlertId, mediumExpiresAt]);
 
@@ -31,8 +35,15 @@ export default function HomeScreen() {
     void fetchAlertHistory();
   }, [token]);
 
+  const hasEscalatedRef = React.useRef(false);
+
   useEffect(() => {
-    if (!mediumExpiresAt) return;
+    if (!mediumExpiresAt) {
+      hasEscalatedRef.current = false;
+      return;
+    }
+
+    hasEscalatedRef.current = false;
 
     const updateRemaining = () => {
       const remainingMs = new Date(mediumExpiresAt).getTime() - Date.now();
@@ -46,14 +57,15 @@ export default function HomeScreen() {
       const seconds = updateRemaining();
       if (seconds <= 0) {
         clearInterval(interval);
-        if (!mediumEscalating) {
+        if (!hasEscalatedRef.current) {
+          hasEscalatedRef.current = true;
           void handleMediumEscalate();
         }
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [mediumExpiresAt, mediumEscalating]);
+  }, [mediumExpiresAt]);
 
   const resetMediumState = () => {
     setMediumAlertId(null);
@@ -80,7 +92,29 @@ export default function HomeScreen() {
     }
   };
 
-  const handleStartSos = async () => {
+  useEffect(() => {
+    if (sosCountdown === null) return;
+    if (sosCountdown <= 0) {
+      setSosCountdown(null);
+      void executeSos();
+      return;
+    }
+    const timer = setTimeout(() => {
+      setSosCountdown((prev) => (prev !== null ? prev - 1 : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [sosCountdown]);
+
+  const handleStartSos = () => {
+    setSosCountdown(5);
+  };
+
+  const cancelSosCountdown = () => {
+    setSosCountdown(null);
+    setEmergencyOpen(false);
+  };
+
+  const executeSos = async () => {
     if (!token || sosLoading) return;
     setSosError(null);
     setSosLoading(true);
@@ -96,6 +130,10 @@ export default function HomeScreen() {
         setSmsWarning('SOS created, but no SMS sent. Add contacts and check Twilio settings.');
       }
       showStatus('SOS alert created.');
+      
+      // Start capturing evidence for this SOS alert
+      startEvidenceCapture(result.alert.alert_id, token);
+
       void fetchAlertHistory();
       setEmergencyOpen(false);
     } catch (error: any) {
@@ -153,11 +191,15 @@ export default function HomeScreen() {
     setMediumError(null);
     setMediumEscalating(true);
     try {
-      await authedApiFetch('/api/medium/escalate', token, {
+      const result = await authedApiFetch('/api/medium/escalate', token, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ alert_id: mediumAlertId }),
       });
+      if (result && result.sos_alert) {
+         startEvidenceCapture(result.sos_alert.alert_id, token);
+      }
+
       resetMediumState();
       showStatus('Escalated to SOS.');
       void fetchAlertHistory();
@@ -180,30 +222,30 @@ export default function HomeScreen() {
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.hero}>
         <Text style={styles.heroTitle}>
-          Welcome back{user?.full_name ? `, ${user.full_name}` : ''}!
+          {t('welcome')}{user?.full_name ? `, ${user.full_name}` : ''}!
         </Text>
-        <Text style={styles.heroSubtitle}>Stay safe on your journey</Text>
+        <Text style={styles.heroSubtitle}>{t('staySafe')}</Text>
       </View>
 
       <View style={styles.grid}>
         <Pressable style={styles.actionCard} onPress={() => router.push('/(tabs)/explore')}>
           <MaterialIcons name="map" size={28} color="#7C3AED" />
-          <Text style={styles.actionTitle}>Safe Routes</Text>
-          <Text style={styles.actionSub}>Navigate safely</Text>
+          <Text style={styles.actionTitle}>{t('safeRoutes')}</Text>
+          <Text style={styles.actionSub}>{t('navigateSafely')}</Text>
         </Pressable>
         <Pressable style={styles.actionCard} onPress={() => router.push('/(tabs)/share')}>
           <MaterialIcons name="share" size={28} color="#7C3AED" />
-          <Text style={styles.actionTitle}>Share Location</Text>
+          <Text style={styles.actionTitle}>{t('shareLocation')}</Text>
           <Text style={styles.actionSub}>With contacts</Text>
         </Pressable>
         <Pressable style={styles.actionCard} onPress={() => router.push('/(tabs)/contacts')}>
           <MaterialIcons name="people" size={28} color="#0D9488" />
-          <Text style={styles.actionTitle}>Safe Contacts</Text>
+          <Text style={styles.actionTitle}>{t('safeContacts')}</Text>
           <Text style={styles.actionSub}>Emergency list</Text>
         </Pressable>
         <Pressable style={styles.actionCard} onPress={() => router.push('/(tabs)/profile')}>
           <MaterialIcons name="person" size={28} color="#F97316" />
-          <Text style={styles.actionTitle}>My Profile</Text>
+          <Text style={styles.actionTitle}>{t('myProfile')}</Text>
           <Text style={styles.actionSub}>Settings & evidence</Text>
         </Pressable>
       </View>
@@ -211,11 +253,11 @@ export default function HomeScreen() {
       <View style={styles.sosArea}>
         <Pressable style={styles.sosButton} onPress={() => setEmergencyOpen(true)}>
           <MaterialIcons name="report" size={22} color="#FFFFFF" />
-          <Text style={styles.sosText}>EMERGENCY SOS</Text>
+          <Text style={styles.sosText}>{t('emergencySos')}</Text>
         </Pressable>
         <Pressable style={styles.mediumButton} onPress={() => setMediumOpen(true)}>
           <MaterialIcons name="warning" size={20} color="#EA580C" />
-          <Text style={styles.mediumText}>I Feel Unsafe</Text>
+          <Text style={styles.mediumText}>{t('iFeelUnsafe')}</Text>
         </Pressable>
         {statusMessage ? <Text style={styles.statusMessage}>{statusMessage}</Text> : null}
         {smsWarning ? <Text style={styles.smsWarning}>{smsWarning}</Text> : null}
@@ -223,44 +265,56 @@ export default function HomeScreen() {
 
       <View style={styles.historyCard}>
         <View style={styles.historyHeader}>
-          <Text style={styles.historyTitle}>Recent Alerts</Text>
+          <Text style={styles.historyTitle}>{t('recentAlerts')}</Text>
           <Pressable onPress={fetchAlertHistory} disabled={alertsLoading}>
             <Text style={styles.historyRefresh}>{alertsLoading ? 'Refreshing...' : 'Refresh'}</Text>
           </Pressable>
         </View>
         {alerts.length === 0 ? (
-          <Text style={styles.historyEmpty}>No alerts yet.</Text>
+          <Text style={styles.historyEmpty}>{t('noAlerts')}</Text>
         ) : (
-          alerts.slice(0, 5).map((alert) => (
-            <View key={alert.alert_id} style={styles.historyRow}>
-              <Text style={styles.historyType}>{alert.type}</Text>
+          alerts.slice(0, 5).map((item) => (
+            <View key={item.alert_id} style={styles.historyRow}>
+              <Text style={styles.historyType}>{item.type}</Text>
               <Text style={styles.historyMeta}>
-                {alert.status} • {new Date(alert.timestamp).toLocaleString()}
+                {item.status} • {formatTimestamp(item.created_at)}
               </Text>
             </View>
           ))
         )}
       </View>
 
-      <Modal transparent visible={emergencyOpen} animationType="fade" onRequestClose={() => setEmergencyOpen(false)}>
+      <Modal transparent visible={emergencyOpen} animationType="fade" onRequestClose={cancelSosCountdown}>
         <View style={styles.modalBackdrop}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setEmergencyOpen(false)} />
+          <Pressable style={StyleSheet.absoluteFill} onPress={cancelSosCountdown} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Emergency SOS</Text>
-            <Text style={styles.modalBody}>
-              Triggering SOS will alert your emergency contacts and start evidence recording.
-            </Text>
-            <View style={styles.modalActions}>
-              <Pressable onPress={() => setEmergencyOpen(false)} style={styles.modalButtonGhost}>
-                <Text style={styles.modalButtonGhostText}>Cancel</Text>
-              </Pressable>
-              <Pressable onPress={handleStartSos} style={styles.modalButtonDanger} disabled={sosLoading}>
-                <Text style={styles.modalButtonDangerText}>
-                  {sosLoading ? 'Starting...' : 'Start SOS'}
+            {sosCountdown !== null ? (
+              <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+                <Text style={{ fontSize: 48, fontWeight: 'bold', color: '#DC2626' }}>{sosCountdown}</Text>
+                <Text style={{ fontSize: 16, color: '#475569', marginTop: 10 }}>Sending alert in...</Text>
+                <Pressable onPress={cancelSosCountdown} style={[styles.modalButtonGhost, { marginTop: 20 }]}>
+                  <Text style={styles.modalButtonGhostText}>Cancel SOS</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.modalBody}>
+                  Triggering SOS will alert your emergency contacts and start evidence recording.
                 </Text>
-              </Pressable>
-            </View>
-            {sosError ? <Text style={styles.modalError}>{sosError}</Text> : null}
+                <View style={styles.modalActions}>
+                  <Pressable onPress={cancelSosCountdown} style={styles.modalButtonGhost}>
+                    <Text style={styles.modalButtonGhostText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable onPress={handleStartSos} style={styles.modalButtonDanger} disabled={sosLoading}>
+                    <Text style={styles.modalButtonDangerText}>
+                      {sosLoading ? 'Starting...' : 'Start SOS'}
+                    </Text>
+                  </Pressable>
+                </View>
+                {sosError ? <Text style={styles.modalError}>{sosError}</Text> : null}
+              </>
+            )}
           </View>
         </View>
       </Modal>

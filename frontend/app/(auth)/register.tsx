@@ -15,15 +15,51 @@ export default function RegisterScreen() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const [step, setStep] = useState<'details' | 'otp'>('details');
+  const [otp, setOtp] = useState('');
+
   useEffect(() => {
     if (token) router.replace('/(tabs)');
   }, [token, router]);
 
-  const onRegister = async () => {
+  const onSendOtp = async () => {
     setError(null);
     setSubmitting(true);
     try {
-      await signUp(fullName.trim(), email.trim(), password, phoneNumber.trim() || undefined);
+      if (phoneNumber.trim()) {
+        const res = await fetch('http://localhost:4000/api/auth/send-otp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone_number: phoneNumber.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to send OTP');
+        setStep('otp');
+      } else {
+        // Fallback to normal sign up if no phone
+        await signUp(fullName.trim(), email.trim(), password, undefined);
+        router.replace('/(tabs)');
+      }
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to send OTP');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const onVerifyOtpAndRegister = async () => {
+    setError(null);
+    setSubmitting(true);
+    try {
+      const res = await fetch('http://localhost:4000/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone_number: phoneNumber.trim(), otp: otp.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Invalid OTP');
+
+      await signUp(fullName.trim(), email.trim(), password, phoneNumber.trim());
       router.replace('/(tabs)');
     } catch (e: any) {
       setError(e?.message ?? 'Registration failed');
@@ -52,40 +88,63 @@ export default function RegisterScreen() {
       </View>
 
       <View style={styles.form}>
-        <View style={styles.field}>
-          <Text style={styles.label}>Full name</Text>
-          <TextInput value={fullName} onChangeText={setFullName} style={styles.input} />
-        </View>
+        {step === 'details' ? (
+          <>
+            <View style={styles.field}>
+              <Text style={styles.label}>Full name</Text>
+              <TextInput value={fullName} onChangeText={setFullName} style={styles.input} />
+            </View>
 
-        <View style={styles.field}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            style={styles.input}
-          />
-        </View>
+            <View style={styles.field}>
+              <Text style={styles.label}>Email</Text>
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                style={styles.input}
+              />
+            </View>
 
-        <View style={styles.field}>
-          <Text style={styles.label}>Phone (optional)</Text>
-          <TextInput value={phoneNumber} onChangeText={setPhoneNumber} keyboardType="phone-pad" style={styles.input} />
-        </View>
+            <View style={styles.field}>
+              <Text style={styles.label}>Phone (required for OTP)</Text>
+              <TextInput placeholder="+251..." value={phoneNumber} onChangeText={setPhoneNumber} keyboardType="phone-pad" style={styles.input} />
+            </View>
 
-        <View style={styles.field}>
-          <Text style={styles.label}>Password</Text>
-          <TextInput value={password} onChangeText={setPassword} secureTextEntry style={styles.input} />
-        </View>
+            <View style={styles.field}>
+              <Text style={styles.label}>Password</Text>
+              <TextInput value={password} onChangeText={setPassword} secureTextEntry style={styles.input} />
+            </View>
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+            {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <Pressable
-          style={[styles.primaryButton, submitting && styles.buttonDisabled]}
-          onPress={onRegister}
-          disabled={submitting}>
-          <Text style={styles.primaryButtonText}>{submitting ? 'Creating...' : 'Create Account'}</Text>
-        </Pressable>
+            <Pressable
+              style={[styles.primaryButton, submitting && styles.buttonDisabled]}
+              onPress={onSendOtp}
+              disabled={submitting}>
+              <Text style={styles.primaryButtonText}>{submitting ? 'Please wait...' : 'Continue'}</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <View style={styles.field}>
+              <Text style={styles.label}>Enter 6-digit OTP</Text>
+              <TextInput value={otp} onChangeText={setOtp} keyboardType="number-pad" maxLength={6} style={styles.input} />
+            </View>
+
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+
+            <Pressable
+              style={[styles.primaryButton, submitting && styles.buttonDisabled]}
+              onPress={onVerifyOtpAndRegister}
+              disabled={submitting}>
+              <Text style={styles.primaryButtonText}>{submitting ? 'Verifying...' : 'Verify & Create Account'}</Text>
+            </Pressable>
+            <Pressable onPress={() => setStep('details')} style={{ marginTop: 10 }}>
+              <Text style={styles.footerText}>Back to details</Text>
+            </Pressable>
+          </>
+        )}
       </View>
 
       <Text style={styles.footerText}>

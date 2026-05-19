@@ -14,6 +14,9 @@ const port = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json());
 
+// In-memory store for OTPs
+const otpStore = new Map();
+
 const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
@@ -228,6 +231,49 @@ app.put("/api/profile", requireAuth, async (req, res) => {
   res.json(data);
 });
 
+// SEND OTP
+app.post("/api/auth/send-otp", async (req, res) => {
+  const { phone_number } = req.body;
+  if (!phone_number) {
+    return res.status(400).json({ error: "phone_number is required" });
+  }
+  const cleanPhone = phone_number.trim();
+  const phoneRegex = /^\+[1-9]\d{1,14}$/;
+  if (!phoneRegex.test(cleanPhone)) {
+    return res.status(400).json({ error: "Invalid phone number format. Must be E.164 (e.g., +251...)" });
+  }
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  otpStore.set(cleanPhone, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
+  
+  console.log(`\n=== SIMULATED OTP FOR ${cleanPhone} ===\n${otp}\n=========================================\n`);
+  res.json({ message: "OTP sent successfully" });
+});
+
+// VERIFY OTP
+app.post("/api/auth/verify-otp", async (req, res) => {
+  const { phone_number, otp } = req.body;
+  if (!phone_number || !otp) {
+    return res.status(400).json({ error: "phone_number and otp are required" });
+  }
+  const cleanPhone = phone_number.trim();
+  const stored = otpStore.get(cleanPhone);
+  
+  if (!stored) {
+    return res.status(400).json({ error: "No OTP found for this number" });
+  }
+  if (Date.now() > stored.expiresAt) {
+    otpStore.delete(cleanPhone);
+    return res.status(400).json({ error: "OTP expired" });
+  }
+  if (stored.otp !== otp.trim()) {
+    return res.status(400).json({ error: "Invalid OTP" });
+  }
+  
+  otpStore.delete(cleanPhone);
+  res.json({ message: "OTP verified successfully" });
+});
+
 // REGISTER
 app.post("/api/auth/register", async (req, res) => {
   const { full_name, email, phone_number, password } = req.body;
@@ -396,6 +442,12 @@ app.post("/api/emergency-contacts", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "name and phone_number are required" });
   }
 
+  const cleanPhone = phone_number.trim();
+  const phoneRegex = /^\+[1-9]\d{1,14}$/;
+  if (!phoneRegex.test(cleanPhone)) {
+    return res.status(400).json({ error: "Invalid phone number format. Must be E.164 (e.g., +251...)" });
+  }
+
   const { data, error } = await supabase
     .from("emergency_contacts")
     .insert([
@@ -433,7 +485,14 @@ app.put("/api/emergency-contacts/:id", requireAuth, async (req, res) => {
 
   const updates = {};
   if (name) updates.name = name;
-  if (phone_number) updates.phone_number = phone_number;
+  if (phone_number) {
+    const cleanPhone = phone_number.trim();
+    const phoneRegex = /^\+[1-9]\d{1,14}$/;
+    if (!phoneRegex.test(cleanPhone)) {
+      return res.status(400).json({ error: "Invalid phone number format. Must be E.164 (e.g., +251...)" });
+    }
+    updates.phone_number = cleanPhone;
+  }
   if (relationship !== undefined) updates.relationship = relationship || null;
 
   const { data, error } = await supabase
@@ -1231,14 +1290,40 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
 
   try {
     const directions = await mapboxDirections(start, end);
-    const routes = (directions.routes || []).map((route, idx) => ({
-      id: `route-${idx + 1}`,
-      label: idx === 0 ? "Route option" : `Route option ${idx + 1}`,
-      distance_km: Math.round((route.distance / 1000) * 100) / 100,
-      duration_min: Math.round((route.duration / 60) * 10) / 10,
-      safety_score: clamp(baseScore + (idx === 0 ? 0.06 : 0.03 - idx * 0.01), 0, 1),
-      geometry: route.geometry,
-    }));
+    const routes = (directions.routes || []).map((route, idx) => {
+      // Simulate factors for UC-05 Safety-Based Routing Algorithm
+      const isHighway = route.distance > 5000;
+      const peopleDensity = Math.random(); // 0 to 1
+      const lighting = Math.random(); // 0 to 1
+      
+      let dynamicScore = baseScore;
+      // High density is safer during day, maybe less safe at night
+      if (time_of_day === "day") {
+        dynamicScore += peopleDensity * 0.1;
+        dynamicScore += lighting * 0.05;
+      } else {
+        dynamicScore += lighting * 0.2; // lighting is very important at night
+        dynamicScore -= (1 - peopleDensity) * 0.1; // deserted areas less safe
+      }
+      
+      if (isHighway) {
+        dynamicScore -= 0.05; // Highways might be less safe for walking
+      } else {
+        dynamicScore += 0.05; // Local roads better
+      }
+
+      // Add a slight preference for the first route returned by the provider
+      dynamicScore += (idx === 0 ? 0.02 : -0.01 * idx);
+
+      return {
+        id: `route-${idx + 1}`,
+        label: idx === 0 ? "Route option" : `Route option ${idx + 1}`,
+        distance_km: Math.round((route.distance / 1000) * 100) / 100,
+        duration_min: Math.round((route.duration / 60) * 10) / 10,
+        safety_score: clamp(dynamicScore, 0, 1),
+        geometry: route.geometry,
+      };
+    });
 
     return res.json({
       start_location_name,
@@ -1257,6 +1342,77 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
       .status(502)
       .json({ error: "Failed to fetch routes from the routing provider." });
   }
+});
+
+// Post route ratings (UC-05)
+app.post("/api/ratings", requireAuth, async (req, res) => {
+  const { user_id } = req.user;
+  const { route_id, score, comment } = req.body;
+
+  if (!route_id || !score) {
+    return res.status(400).json({ error: "route_id and score are required" });
+  }
+
+  const { data, error } = await supabase
+    .from("ratings")
+    .insert([{
+      user_id,
+      route_id,
+      score: clamp(Number(score), 1, 5),
+      comment: comment || null,
+    }])
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("Supabase error (ratings):", error);
+    return res.status(400).json({ error: error.message });
+  }
+
+  res.status(201).json(data);
+});
+
+// Get evidence for a specific SOS alert (UC-08)
+app.get("/api/sos/evidence/:alertId", requireAuth, async (req, res) => {
+  const { alertId } = req.params;
+  const { data, error } = await supabase
+    .from("emergency_evidence")
+    .select("*")
+    .eq("alert_id", alertId)
+    .order("timestamp", { ascending: true });
+
+  if (error) {
+    console.error("Supabase error (get evidence):", error);
+    return res.status(400).json({ error: error.message });
+  }
+
+  res.json(data || []);
+});
+
+// Post evidence metadata for SOS alerts (UC-08)
+app.post("/api/sos/evidence", requireAuth, async (req, res) => {
+  const { alert_id, type, file_path } = req.body;
+
+  if (!alert_id || !type || !file_path) {
+    return res.status(400).json({ error: "alert_id, type, and file_path are required" });
+  }
+
+  const { data, error } = await supabase
+    .from("emergency_evidence")
+    .insert([{
+      alert_id,
+      type,
+      file_path
+    }])
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("Supabase error (evidence):", error);
+    return res.status(400).json({ error: error.message });
+  }
+
+  res.status(201).json(data);
 });
 
 app.listen(port, '0.0.0.0', () => {
