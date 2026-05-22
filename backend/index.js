@@ -45,9 +45,13 @@ async function fetchJson(url) {
 }
 
 async function mapboxGeocode(name) {
+  const queryName = name.toLowerCase().includes("addis ababa")
+    ? name
+    : `${name}, Addis Ababa, Ethiopia`;
+
   if (MAPBOX_TOKEN) {
     const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
-      name
+      queryName
     )}.json?limit=1&access_token=${MAPBOX_TOKEN}`;
     const data = await fetchJson(url);
     const feature = data?.features?.[0];
@@ -56,7 +60,7 @@ async function mapboxGeocode(name) {
   }
 
   const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(
-    name
+    queryName
   )}`;
   const response = await fetch(url, {
     headers: {

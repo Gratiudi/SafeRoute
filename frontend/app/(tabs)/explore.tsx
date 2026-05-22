@@ -132,12 +132,40 @@ export default function RoutesScreen() {
         end_location_name: destination.trim(),
       };
 
+      let activeStartCoords = startCoords;
+      let activeStartText = start.trim();
+
+      // Automatically fetch current GPS location if start field is left blank
+      if (!activeStartText && !activeStartCoords) {
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === "granted") {
+            const location = await Location.getCurrentPositionAsync({});
+            const coords = {
+              lat: location.coords.latitude,
+              lng: location.coords.longitude,
+            };
+            setStartCoords(coords);
+            setStart("My Location");
+            activeStartCoords = coords;
+          } else {
+            // Fallback to "Addis Ababa" if permission is denied
+            activeStartText = "Addis Ababa";
+            setStart("Addis Ababa");
+          }
+        } catch (err) {
+          // Fallback if location services are disabled or fail
+          activeStartText = "Addis Ababa";
+          setStart("Addis Ababa");
+        }
+      }
+
       // Use real GPS coords if available, otherwise use text
-      if (startCoords) {
-        payload.start_lat = startCoords.lat;
-        payload.start_lng = startCoords.lng;
-      } else if (start.trim()) {
-        payload.start_location_name = start.trim();
+      if (activeStartCoords) {
+        payload.start_lat = activeStartCoords.lat;
+        payload.start_lng = activeStartCoords.lng;
+      } else if (activeStartText) {
+        payload.start_location_name = activeStartText;
       }
 
       if (timeOfDay !== "auto") payload.time_of_day = timeOfDay;
