@@ -41,6 +41,7 @@ export default function RoutesScreen() {
   const [locating, setLocating] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
   const [navigatingRouteId, setNavigatingRouteId] = useState<string | null>(null);
+  const [savedRouteDbId, setSavedRouteDbId] = useState<string | null>(null);
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [ratingScore, setRatingScore] = useState<number>(5);
   const [ratingComment, setRatingComment] = useState("");
@@ -186,9 +187,30 @@ export default function RoutesScreen() {
     }
   };
 
-  const handleStartNavigation = (routeId: string) => {
+  const handleStartNavigation = async (routeId: string) => {
     setNavigatingRouteId(routeId);
     setIsNavigating(true);
+
+    // Save the route to the database so we get a real UUID for the rating FK
+    const route = routes.find((r) => r.id === routeId);
+    if (route && token) {
+      try {
+        const saved = await authedApiFetch("/api/routes", token, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            distance: route.distance_km,
+            duration: route.duration_min,
+            safety_score: route.safety_score,
+          }),
+        });
+        // Store the real database route_id for use when submitting the rating
+        setSavedRouteDbId(saved?.route_id ?? null);
+      } catch (e) {
+        console.error("Failed to save route to DB:", e);
+        setSavedRouteDbId(null);
+      }
+    }
   };
 
   const handleFinishNavigation = () => {
@@ -197,24 +219,28 @@ export default function RoutesScreen() {
   };
 
   const submitRating = async () => {
-    if (!token || !navigatingRouteId) return;
+    if (!token) return;
     setSubmittingRating(true);
     try {
-      await authedApiFetch("/api/ratings", token, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          route_id: navigatingRouteId,
-          score: ratingScore,
-          comment: ratingComment.trim() || undefined,
-        }),
-      });
+      // Only submit a rating if we have a real persisted route_id
+      if (savedRouteDbId) {
+        await authedApiFetch("/api/ratings", token, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            route_id: savedRouteDbId,
+            score: ratingScore,
+            comment: ratingComment.trim() || undefined,
+          }),
+        });
+      }
     } catch (e: any) {
       console.error(e);
     } finally {
       setSubmittingRating(false);
       setShowRatingModal(false);
       setNavigatingRouteId(null);
+      setSavedRouteDbId(null);
       setRatingScore(5);
       setRatingComment("");
     }

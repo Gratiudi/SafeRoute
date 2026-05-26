@@ -1,12 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/lib/auth';
 import { authedApiFetch } from '@/lib/api';
-import { startEvidenceCapture, stopEvidenceCapture } from '@/lib/evidence';
+import { startEvidenceCapture, stopEvidenceCapture, uploadPhotoEvidence } from '@/lib/evidence';
 import { useI18n } from '@/lib/i18n';
 import * as Location from 'expo-location';
+import { Audio } from 'expo-av';
+import { Camera, CameraView } from 'expo-camera';
 
 export default function HomeScreen() {
   const { user, token } = useAuth();
@@ -35,6 +37,40 @@ export default function HomeScreen() {
   const [activeSosOpen, setActiveSosOpen] = useState(false);
   const [activeSosDuration, setActiveSosDuration] = useState(0);
 
+  const cameraRef = useRef<any>(null);
+  const activeSosAlertIdRef = useRef<string | null>(null);
+  const tokenRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    activeSosAlertIdRef.current = activeSosAlertId;
+  }, [activeSosAlertId]);
+
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
+  const captureAndUploadPhoto = async () => {
+    const aid = activeSosAlertIdRef.current;
+    const tok = tokenRef.current;
+    if (!cameraRef.current || !aid || !tok) {
+      console.log("[HomeScreen] Cannot capture photo: camera ref, alert ID, or token missing.");
+      return;
+    }
+    try {
+      console.log("[HomeScreen] Capturing photo evidence...");
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.5,
+        skipProcessing: true,
+      });
+      if (photo && photo.uri) {
+        console.log("[HomeScreen] Photo captured. Uploading from uri:", photo.uri);
+        await uploadPhotoEvidence(aid, tok, photo.uri);
+      }
+    } catch (err) {
+      console.error("[HomeScreen] Photo capture/upload failed:", err);
+    }
+  };
+
   useEffect(() => {
     if (!token) return;
     void fetchAlertHistory();
@@ -43,15 +79,30 @@ export default function HomeScreen() {
   // Active SOS timer
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
+    let initialPhotoTimeout: NodeJS.Timeout | null = null;
+
     if (activeSosOpen) {
+      // Warm up camera and capture initial photo after 1.5 seconds
+      initialPhotoTimeout = setTimeout(() => {
+        void captureAndUploadPhoto();
+      }, 1500);
+
       interval = setInterval(() => {
-        setActiveSosDuration((prev) => prev + 1);
+        setActiveSosDuration((prev) => {
+          const next = prev + 1;
+          if (next > 0 && next % 30 === 0) {
+            void captureAndUploadPhoto();
+          }
+          return next;
+        });
       }, 1000);
     } else {
       setActiveSosDuration(0);
     }
+
     return () => {
       if (interval) clearInterval(interval);
+      if (initialPhotoTimeout) clearTimeout(initialPhotoTimeout);
     };
   }, [activeSosOpen]);
 
@@ -155,6 +206,14 @@ export default function HomeScreen() {
     setSosLoading(true);
     setSmsWarning(null);
     try {
+      // Request Camera and Audio permissions before starting capture
+      try {
+        await Camera.requestCameraPermissionsAsync();
+        await Audio.requestPermissionsAsync();
+      } catch (permissionErr) {
+        console.warn("Failed to request camera/mic permissions:", permissionErr);
+      }
+
       const locationPayload = await getEmergencyLocation();
       const result = await authedApiFetch('/api/sos/start', token, {
         method: 'POST',
@@ -229,6 +288,14 @@ export default function HomeScreen() {
     setMediumError(null);
     setMediumEscalating(true);
     try {
+      // Request Camera and Audio permissions before starting capture
+      try {
+        await Camera.requestCameraPermissionsAsync();
+        await Audio.requestPermissionsAsync();
+      } catch (permissionErr) {
+        console.warn("Failed to request camera/mic permissions:", permissionErr);
+      }
+
       const locationPayload = await getEmergencyLocation();
       const result = await authedApiFetch('/api/medium/escalate', token, {
         method: 'POST',
@@ -452,6 +519,14 @@ export default function HomeScreen() {
       <Modal transparent visible={activeSosOpen} animationType="slide">
         <View style={styles.sosOverlay}>
           <View style={styles.sosContainer}>
+            {activeSosOpen && (
+              <CameraView
+                ref={cameraRef}
+                style={{ width: 1, height: 1, opacity: 0, position: 'absolute' }}
+                facing="back"
+                mode="picture"
+              />
+            )}
             <View style={styles.sosHeader}>
               <View style={styles.sosPulse}>
                 <MaterialIcons name="report" size={36} color="#FFFFFF" />

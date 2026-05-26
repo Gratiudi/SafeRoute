@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, Image, Modal } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useAuth } from '@/lib/auth';
 import { authedApiFetch } from '@/lib/api';
 import { useI18n, Language, CalendarType } from '@/lib/i18n';
+import { Audio } from 'expo-av';
 
 type Tab = 'profile' | 'evidence';
 
@@ -46,6 +47,72 @@ export default function ProfileScreen() {
   const [alertsWithEvidence, setAlertsWithEvidence] = useState<AlertWithEvidence[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [expandedAlert, setExpandedAlert] = useState<string | null>(null);
+
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [soundObject, setSoundObject] = useState<Audio.Sound | null>(null);
+  const [viewingPhotoUrl, setViewingPhotoUrl] = useState<string | null>(null);
+
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+
+  const getEvidenceUrl = (filePath: string) => {
+    if (filePath.startsWith('http')) return filePath;
+    return `${supabaseUrl}/storage/v1/object/public/evidence/${filePath}`;
+  };
+
+  const handlePlayAudio = async (item: EvidenceItem) => {
+    try {
+      if (playingAudioId === item.evidence_id) {
+        if (soundObject) {
+          await soundObject.stopAsync();
+          await soundObject.unloadAsync();
+        }
+        setPlayingAudioId(null);
+        setSoundObject(null);
+        return;
+      }
+
+      if (soundObject) {
+        await soundObject.unloadAsync();
+      }
+
+      setPlayingAudioId(item.evidence_id);
+      const url = getEvidenceUrl(item.file_path);
+      console.log("[ProfileScreen] Playing audio from:", url);
+
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: url },
+        { shouldPlay: true }
+      );
+
+      setSoundObject(sound);
+
+      sound.setOnPlaybackStatusUpdate(async (status) => {
+        if (status.isLoaded && status.didJustFinish) {
+          await sound.unloadAsync();
+          setPlayingAudioId(null);
+          setSoundObject(null);
+        }
+      });
+    } catch (err) {
+      console.error("Failed to play audio:", err);
+      alert("Unable to play this audio. The file may still be uploading or the storage bucket is offline.");
+      setPlayingAudioId(null);
+      setSoundObject(null);
+    }
+  };
+
+  const handleViewPhoto = (item: EvidenceItem) => {
+    const url = getEvidenceUrl(item.file_path);
+    setViewingPhotoUrl(url);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (soundObject) {
+        soundObject.unloadAsync().catch(() => {});
+      }
+    };
+  }, [soundObject]);
 
   useEffect(() => {
     if (!token) return;
@@ -336,9 +403,24 @@ export default function ProfileScreen() {
                             <MaterialIcons name={item.type === 'Audio' ? 'mic' : 'photo-camera'} size={18} color={item.type === 'Audio' ? '#7C3AED' : '#2563EB'} />
                             <Text style={styles.evidenceItemLabel}>{item.type} {idx + 1}</Text>
                           </View>
-                          <Pressable style={styles.evidencePlayBtn}>
-                            <MaterialIcons name={item.type === 'Audio' ? 'play-arrow' : 'image'} size={14} color="#475569" />
-                            <Text style={styles.evidencePlayText}>{item.type === 'Audio' ? 'Play' : 'View'}</Text>
+                          <Pressable
+                            style={styles.evidencePlayBtn}
+                            onPress={() => item.type === 'Audio' ? handlePlayAudio(item) : handleViewPhoto(item)}
+                          >
+                            <MaterialIcons
+                              name={item.type === 'Audio'
+                                ? (playingAudioId === item.evidence_id ? 'stop' : 'play-arrow')
+                                : 'image'
+                              }
+                              size={14}
+                              color="#475569"
+                            />
+                            <Text style={styles.evidencePlayText}>
+                              {item.type === 'Audio'
+                                ? (playingAudioId === item.evidence_id ? 'Stop' : 'Play')
+                                : 'View'
+                              }
+                            </Text>
                           </Pressable>
                           <Text style={styles.evidenceTimestamp}>{new Date(item.timestamp).toLocaleTimeString()}</Text>
                         </View>
@@ -375,6 +457,25 @@ export default function ProfileScreen() {
           </View>
         </>
       )}
+
+      {/* Photo Viewer Modal */}
+      <Modal transparent visible={!!viewingPhotoUrl} animationType="fade" onRequestClose={() => setViewingPhotoUrl(null)}>
+        <View style={styles.photoOverlay}>
+          <Pressable style={styles.photoCloseBackground} onPress={() => setViewingPhotoUrl(null)} />
+          <View style={styles.photoModalContent}>
+            {viewingPhotoUrl && (
+              <Image
+                source={{ uri: viewingPhotoUrl }}
+                style={styles.photoFullImage}
+                resizeMode="contain"
+              />
+            )}
+            <Pressable style={styles.photoCloseBtn} onPress={() => setViewingPhotoUrl(null)}>
+              <MaterialIcons name="close" size={24} color="#FFFFFF" />
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -457,4 +558,10 @@ const styles = StyleSheet.create({
   infoCard: { backgroundColor: '#EFF6FF', borderRadius: 14, padding: 14, gap: 6, borderWidth: 1, borderColor: '#BFDBFE' },
   infoCardTitle: { fontWeight: '700', color: '#1E3A5F', fontSize: 14 },
   infoCardLine: { fontSize: 13, color: '#1E40AF' },
+  // Photo Viewer Modal
+  photoOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.9)', justifyContent: 'center', alignItems: 'center' },
+  photoCloseBackground: { ...StyleSheet.absoluteFillObject },
+  photoModalContent: { width: '90%', height: '80%', justifyContent: 'center', alignItems: 'center' },
+  photoFullImage: { width: '100%', height: '100%' },
+  photoCloseBtn: { position: 'absolute', top: -40, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8 },
 });

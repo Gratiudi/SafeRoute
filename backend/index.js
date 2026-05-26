@@ -11,7 +11,8 @@ const app = express();
 const port = process.env.PORT || 4000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "20mb" }));
+app.use(express.urlencoded({ limit: "20mb", extended: true }));
 
 // In-memory store for OTPs
 const otpStore = new Map();
@@ -985,7 +986,7 @@ app.post("/api/sos/stop", requireAuth, async (req, res) => {
 // Attach emergency evidence (audio/photo) to an alert
 app.post("/api/sos/evidence", requireAuth, async (req, res) => {
   const { user_id } = req.user;
-  const { alert_id, type, file_path, timestamp } = req.body || {};
+  const { alert_id, type, file_path, timestamp, file_base64 } = req.body || {};
 
   if (!alert_id || !type || !file_path) {
     return res
@@ -1004,6 +1005,48 @@ app.post("/api/sos/evidence", requireAuth, async (req, res) => {
   if (alertError) {
     console.error("Supabase error:", alertError);
     return res.status(403).json({ error: "Alert not found for this user" });
+  }
+
+  // If a base64 file payload is sent, upload it to Supabase Storage
+  if (file_base64) {
+    try {
+      const fileBuffer = Buffer.from(file_base64, "base64");
+      const contentType = type === "Audio" ? "audio/m4a" : "image/jpeg";
+
+      let { error: uploadError } = await supabase.storage
+        .from("evidence")
+        .upload(file_path, fileBuffer, {
+          contentType,
+          upsert: true,
+        });
+
+      // If bucket doesn't exist, try to create it dynamically
+      if (uploadError && uploadError.message?.includes("bucket not found")) {
+        console.log("Bucket 'evidence' not found. Creating it...");
+        const { error: bucketError } = await supabase.storage.createBucket("evidence", {
+          public: true,
+        });
+        if (!bucketError) {
+          const { error: retryError } = await supabase.storage
+            .from("evidence")
+            .upload(file_path, fileBuffer, {
+              contentType,
+              upsert: true,
+            });
+          uploadError = retryError;
+        } else {
+          console.error("Failed to create bucket 'evidence':", bucketError);
+        }
+      }
+
+      if (uploadError) {
+        console.error("Supabase Storage error during upload:", uploadError);
+        return res.status(500).json({ error: `Storage upload failed: ${uploadError.message}` });
+      }
+    } catch (err) {
+      console.error("Failed to parse/upload base64 payload:", err);
+      return res.status(500).json({ error: `Storage upload failed: ${err.message}` });
+    }
   }
 
   const { data, error } = await supabase

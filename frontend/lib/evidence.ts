@@ -1,57 +1,129 @@
 import { authedApiFetch } from "./api";
-
-// This is a simulated evidence capture module.
-// In a full native implementation, this would use expo-camera and expo-av
-// and upload actual files via Supabase Storage.
-// For now, it periodically posts mock evidence to the backend.
+import { Audio } from "expo-av";
+import * as FileSystem from "expo-file-system";
 
 let captureInterval: NodeJS.Timeout | null = null;
+let currentRecording: Audio.Recording | null = null;
 
 export const startEvidenceCapture = (alertId: string, token: string) => {
   if (captureInterval) {
     clearInterval(captureInterval);
   }
 
-  let counter = 0;
-  
-  // Every 30 seconds, simulate capturing and uploading evidence
-  captureInterval = setInterval(async () => {
-    counter++;
-    const isAudio = counter % 2 === 0;
-    const type = isAudio ? "Audio" : "Photo";
-    const filePath = isAudio
-      ? `evidence/${alertId}/audio_${Date.now()}.m4a`
-      : `evidence/${alertId}/photo_${Date.now()}.jpg`;
-
+  // Define a function to record and upload a snippet of audio
+  const recordAndUploadSnippet = async () => {
     try {
-      console.log(`[EvidenceCapture] Capturing ${type} and uploading to ${filePath}`);
+      console.log("[EvidenceCapture] Starting audio snippet recording...");
       
-      // Send the evidence metadata to the backend
+      // Request permission
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== "granted") {
+        console.warn("[EvidenceCapture] Microphone permission not granted.");
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const recording = new Audio.Recording();
+      currentRecording = recording;
+      
+      await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await recording.startAsync();
+
+      // Record for 5 seconds
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+
+      await recording.stopAndUnloadAsync();
+      const localUri = recording.getURI();
+      currentRecording = null;
+
+      if (!localUri) {
+        console.warn("[EvidenceCapture] Failed to get recording local URI.");
+        return;
+      }
+
+      console.log("[EvidenceCapture] Audio recorded at:", localUri);
+
+      // Read file as base64
+      const base64 = await FileSystem.readAsStringAsync(localUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const filePath = `evidence/${alertId}/audio_${Date.now()}.m4a`;
+
+      // Upload to backend
       await authedApiFetch("/api/sos/evidence", token, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           alert_id: alertId,
-          type,
+          type: "Audio",
           file_path: filePath,
+          file_base64: base64,
         }),
       });
-      
-      console.log(`[EvidenceCapture] Successfully saved ${type} metadata.`);
-    } catch (e) {
-      console.error("[EvidenceCapture] Failed to capture or upload evidence:", e);
-      // In a real implementation, we would queue this locally using AsyncStorage 
-      // or sqlite and retry when the network is restored.
-    }
-  }, 30000); // 30 seconds
 
-  console.log("[EvidenceCapture] Started capturing evidence for alert", alertId);
+      console.log("[EvidenceCapture] Successfully uploaded audio evidence snippet.");
+    } catch (e) {
+      console.error("[EvidenceCapture] Audio snippet record/upload failed:", e);
+    }
+  };
+
+  // Perform an initial capture immediately
+  void recordAndUploadSnippet();
+
+  // Then record every 30 seconds
+  captureInterval = setInterval(() => {
+    void recordAndUploadSnippet();
+  }, 30000);
+
+  console.log("[EvidenceCapture] Started audio evidence capture loop for alert", alertId);
 };
 
-export const stopEvidenceCapture = () => {
+export const uploadPhotoEvidence = async (alertId: string, token: string, localUri: string) => {
+  try {
+    console.log("[EvidenceCapture] Reading photo as base64 from:", localUri);
+
+    const base64 = await FileSystem.readAsStringAsync(localUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    const filePath = `evidence/${alertId}/photo_${Date.now()}.jpg`;
+
+    await authedApiFetch("/api/sos/evidence", token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        alert_id: alertId,
+        type: "Photo",
+        file_path: filePath,
+        file_base64: base64,
+      }),
+    });
+
+    console.log("[EvidenceCapture] Successfully uploaded photo evidence.");
+  } catch (e) {
+    console.error("[EvidenceCapture] Photo upload failed:", e);
+  }
+};
+
+export const stopEvidenceCapture = async () => {
   if (captureInterval) {
     clearInterval(captureInterval);
     captureInterval = null;
-    console.log("[EvidenceCapture] Stopped capturing evidence.");
   }
+
+  if (currentRecording) {
+    try {
+      await currentRecording.stopAndUnloadAsync();
+    } catch {
+      // ignore failures during forced stop
+    }
+    currentRecording = null;
+  }
+
+  console.log("[EvidenceCapture] Stopped capturing evidence.");
 };
