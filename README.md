@@ -57,7 +57,7 @@ The current scope does not include direct integration with live police dispatch,
 - Express.js
 - PostgreSQL / Supabase
 - JWT authentication
-- Twilio for SMS notifications
+- SMSEthiopia for SMS notifications
 - Mapbox or OpenStreetMap routing services
 
 ## 📂 Project Structure
@@ -102,9 +102,8 @@ SUPABASE_URL=your-supabase-url
 SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 JWT_SECRET=your-jwt-secret
 MAPBOX_TOKEN=your-mapbox-token
-TWILIO_ACCOUNT_SID=your-twilio-account-sid
-TWILIO_AUTH_TOKEN=your-twilio-auth-token
-TWILIO_FROM_NUMBER=your-twilio-sender-number
+SMSETHIOPIA_API_KEY=your-smsethiopia-api-key
+SMSETHIOPIA_API_URL=https://smsethiopia.com/api/sms/send
 SUPABASE_EVIDENCE_BUCKET=emergency-evidence
 ```
 
