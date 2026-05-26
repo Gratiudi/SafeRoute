@@ -7,6 +7,7 @@ const fetch = require("node-fetch");
 const crypto = require("crypto");
 const { supabase } = require("./supabaseClient");
 
+
 const app = express();
 const port = process.env.PORT || 4000;
 
@@ -136,39 +137,32 @@ function toMsisdn(phoneNumber) {
   return digits;
 }
 
+const { sendSMS: sendTwilioSMS } = require("./services/twilioService");
+
+const { sendSMS } = require("./services/twilioService");
+
 async function sendSms(to, body) {
   const msisdn = toMsisdn(to);
 
-  if (!canSendSms) {
-    console.log(`\n=== SIMULATED SMS TO ${msisdn || to} ===\n${body}\n==============================\n`);
+  try {
+    console.log("📲 Sending SMS via Twilio...");
+
+    const result = await sendSMS(msisdn, body);
+
+    console.log("Twilio success:", result.sid);
+
+    return {
+      status: "sent",
+      provider: "twilio",
+      sid: result.sid,
+    };
+  } catch (err) {
+    console.error("❌ Twilio failed:", err.message);
+
+    console.log(`\n=== SIMULATED SMS TO ${msisdn} ===\n${body}\n==============================\n`);
+
     return { status: "simulated" };
   }
-
-  const response = await fetch(SMSETHIOPIA_API_URL, {
-    method: "POST",
-    headers: {
-      KEY: SMSETHIOPIA_API_KEY,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      msisdn,
-      text: body,
-    }),
-  });
-
-  const text = await response.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    // ignore non-json provider responses
-  }
-
-  if (!response.ok || json?.status === "error") {
-    throw new Error(json?.message || text || `SMSEthiopia HTTP ${response.status}`);
-  }
-
-  return { status: "sent", provider: "SMSEthiopia", response: json };
 }
 
 function mapsLink(latitude, longitude) {
@@ -245,7 +239,34 @@ app.get("/", (req, res) => {
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });
 });
+ //here
 
+ app.post("/api/test-twilio", async (req, res) => {
+   const { phone_number, message } = req.body || {};
+
+   if (!phone_number) {
+     return res.status(400).json({ error: "phone_number is required" });
+   }
+
+   try {
+     const result = await sendSMS(
+       phone_number,
+       message || "SafeRoute Twilio test message 🚀"
+     );
+
+     res.json({
+       ok: true,
+       sid: result.sid,
+       status: result.status,
+     });
+   } catch (err) {
+     console.error("Twilio error:", err);
+     res.status(500).json({
+       ok: false,
+       error: err.message,
+     });
+   }
+ });
 // SMS provider smoke test (no database required)
 app.post("/api/test-sms", async (req, res) => {
   const { phone_number, message } = req.body || {};
