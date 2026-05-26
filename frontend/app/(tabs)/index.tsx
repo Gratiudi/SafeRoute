@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { authedApiFetch } from '@/lib/api';
 import { startEvidenceCapture, stopEvidenceCapture } from '@/lib/evidence';
 import { useI18n } from '@/lib/i18n';
+import * as Location from 'expo-location';
 
 export default function HomeScreen() {
   const { user, token } = useAuth();
@@ -133,20 +134,36 @@ export default function HomeScreen() {
     setEmergencyOpen(false);
   };
 
+  const getEmergencyLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return {};
+
+      const location = await Location.getCurrentPositionAsync({});
+      return {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      };
+    } catch {
+      return {};
+    }
+  };
+
   const executeSos = async () => {
     if (!token || sosLoading) return;
     setSosError(null);
     setSosLoading(true);
     setSmsWarning(null);
     try {
+      const locationPayload = await getEmergencyLocation();
       const result = await authedApiFetch('/api/sos/start', token, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'SOS' }),
+        body: JSON.stringify({ type: 'SOS', ...locationPayload }),
       });
       const sms = Array.isArray(result?.sms) ? result.sms : [];
       if (!sms.length) {
-        setSmsWarning('SOS created, but no SMS sent. Add contacts and check Twilio settings.');
+        setSmsWarning('SOS created, but no SMS sent. Add contacts and check SMS provider settings.');
       }
       showStatus('SOS alert created.');
       
@@ -212,10 +229,11 @@ export default function HomeScreen() {
     setMediumError(null);
     setMediumEscalating(true);
     try {
+      const locationPayload = await getEmergencyLocation();
       const result = await authedApiFetch('/api/medium/escalate', token, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alert_id: mediumAlertId }),
+        body: JSON.stringify({ alert_id: mediumAlertId, ...locationPayload }),
       });
       if (result && result.sos_alert) {
          startEvidenceCapture(result.sos_alert.alert_id, token);
@@ -881,4 +899,3 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
 });
-

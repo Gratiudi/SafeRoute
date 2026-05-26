@@ -4,7 +4,6 @@ const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const fetch = require("node-fetch");
-const twilio = require("twilio");
 const crypto = require("crypto");
 const { supabase } = require("./supabaseClient");
 
@@ -18,17 +17,15 @@ app.use(express.json());
 const otpStore = new Map();
 
 const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER;
-const hasTwilioCreds =
-  typeof TWILIO_ACCOUNT_SID === "string" &&
-  TWILIO_ACCOUNT_SID.startsWith("AC") &&
-  typeof TWILIO_AUTH_TOKEN === "string" &&
-  TWILIO_AUTH_TOKEN.length > 0;
-const twilioClient = hasTwilioCreds ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) : null;
-if (!twilioClient) {
-  console.warn("Twilio not configured. SMS notifications will be skipped.");
+const SMSETHIOPIA_API_KEY = process.env.SMSETHIOPIA_API_KEY;
+const SMSETHIOPIA_API_URL =
+  process.env.SMSETHIOPIA_API_URL || "https://smsethiopia.com/api/sms/send";
+const canSendSms =
+  typeof SMSETHIOPIA_API_KEY === "string" &&
+  SMSETHIOPIA_API_KEY.length > 0 &&
+  !SMSETHIOPIA_API_KEY.startsWith("your-");
+if (!canSendSms) {
+  console.warn("SMSEthiopia not configured. SMS notifications will be simulated.");
 }
 
 function clamp(value, min, max) {
@@ -117,22 +114,101 @@ async function fetchUserContacts(user_id) {
   return data || [];
 }
 
+async function fetchUserProfile(user_id) {
+  const { data, error } = await supabase
+    .from("users")
+    .select("full_name, email, phone_number")
+    .eq("user_id", user_id)
+    .single();
+
+  if (error) {
+    console.error("Supabase error:", error);
+    return null;
+  }
+
+  return data;
+}
+
+function toMsisdn(phoneNumber) {
+  const digits = String(phoneNumber || "").replace(/[^\d]/g, "");
+  if (digits.startsWith("0")) return `251${digits.slice(1)}`;
+  return digits;
+}
+
+async function sendSms(to, body) {
+  const msisdn = toMsisdn(to);
+
+  if (!canSendSms) {
+    console.log(`\n=== SIMULATED SMS TO ${msisdn || to} ===\n${body}\n==============================\n`);
+    return { status: "simulated" };
+  }
+
+  const response = await fetch(SMSETHIOPIA_API_URL, {
+    method: "POST",
+    headers: {
+      KEY: SMSETHIOPIA_API_KEY,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      msisdn,
+      text: body,
+    }),
+  });
+
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    // ignore non-json provider responses
+  }
+
+  if (!response.ok || json?.status === "error") {
+    throw new Error(json?.message || text || `SMSEthiopia HTTP ${response.status}`);
+  }
+
+  return { status: "sent", provider: "SMSEthiopia", response: json };
+}
+
+function mapsLink(latitude, longitude) {
+  if (latitude === undefined || longitude === undefined) return null;
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return `https://maps.google.com/?q=${lat},${lng}`;
+}
+
+function buildEmergencySms({ alertType, user, latitude, longitude, isEscalation = false }) {
+  const name = user?.full_name || "A SafeRoute user";
+  const locationUrl = mapsLink(latitude, longitude);
+  const reason = isEscalation
+    ? "Their medium alert timer expired and escalated to SOS."
+    : `${alertType} alert activated.`;
+  return [
+    `SafeRoute emergency alert from ${name}.`,
+    reason,
+    locationUrl ? `Location: ${locationUrl}` : null,
+    "Please check in immediately.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 async function notifyContacts(contacts, messageBody) {
   const smsResults = [];
-  if (!twilioClient || !TWILIO_FROM_NUMBER) return smsResults;
 
   for (const contact of contacts || []) {
     if (!contact.phone_number) continue;
     try {
-      const result = await twilioClient.messages.create({
-        to: contact.phone_number,
-        from: TWILIO_FROM_NUMBER,
-        body: messageBody,
-      });
-      smsResults.push({ contact_id: contact.contact_id, status: "sent", sid: result.sid });
+      const result = await sendSms(contact.phone_number, messageBody);
+      smsResults.push({ contact_id: contact.contact_id, ...result });
     } catch (err) {
-      console.error("Twilio send error:", err);
-      smsResults.push({ contact_id: contact.contact_id, status: "failed" });
+      console.error("SMSEthiopia send error:", err);
+      smsResults.push({
+        contact_id: contact.contact_id,
+        status: "failed",
+        error: err?.message || "Unable to send SMS",
+      });
     }
   }
 
@@ -167,6 +243,32 @@ app.get("/", (req, res) => {
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });
+});
+
+// SMS provider smoke test (no database required)
+app.post("/api/test-sms", async (req, res) => {
+  const { phone_number, message } = req.body || {};
+  const cleanPhone = typeof phone_number === "string" ? phone_number.trim() : "";
+
+  if (!cleanPhone) {
+    return res.status(400).json({ error: "phone_number is required" });
+  }
+
+  const phoneRegex = /^\+?[1-9]\d{1,14}$/;
+  if (!phoneRegex.test(cleanPhone)) {
+    return res.status(400).json({ error: "Invalid phone number format. Use +251..." });
+  }
+
+  try {
+    const result = await sendSms(
+      cleanPhone,
+      message || "SafeRoute test SMS: your SMS provider is connected."
+    );
+    res.json({ ok: true, phone_number: cleanPhone, sms: result });
+  } catch (err) {
+    console.error("SMS test error:", err);
+    res.status(502).json({ error: err?.message || "Failed to send test SMS" });
+  }
 });
 
 // JWT auth middleware
@@ -249,9 +351,18 @@ app.post("/api/auth/send-otp", async (req, res) => {
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   otpStore.set(cleanPhone, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
-  
-  console.log(`\n=== SIMULATED OTP FOR ${cleanPhone} ===\n${otp}\n=========================================\n`);
-  res.json({ message: "OTP sent successfully" });
+
+  if (!canSendSms) {
+    console.log(`\n=== SIMULATED OTP FOR ${cleanPhone} ===\n${otp}\n=========================================\n`);
+  }
+  try {
+    await sendSms(cleanPhone, `Your SafeRoute verification code is ${otp}. It expires in 5 minutes.`);
+    res.json({ message: "OTP sent successfully" });
+  } catch (err) {
+    console.error("SMSEthiopia OTP send error:", err);
+    otpStore.delete(cleanPhone);
+    res.status(502).json({ error: "Failed to send OTP SMS" });
+  }
 });
 
 // VERIFY OTP
@@ -602,7 +713,7 @@ app.post("/api/medium/confirm", requireAuth, async (req, res) => {
 // Medium alert: escalation to SOS (called when countdown expires)
 app.post("/api/medium/escalate", requireAuth, async (req, res) => {
   const { user_id } = req.user;
-  const { alert_id } = req.body || {};
+  const { alert_id, latitude, longitude } = req.body || {};
 
   if (!alert_id) {
     return res.status(400).json({ error: "alert_id is required" });
@@ -641,9 +752,16 @@ app.post("/api/medium/escalate", requireAuth, async (req, res) => {
   }
 
   const contacts = await fetchUserContacts(user_id);
+  const user = await fetchUserProfile(user_id);
   const smsResults = await notifyContacts(
     contacts,
-    "SafeRoute SOS alert: Medium alert escalated. Please check in immediately."
+    buildEmergencySms({
+      alertType: "SOS",
+      user,
+      latitude,
+      longitude,
+      isEscalation: true,
+    })
   );
 
   res.status(201).json({ medium_resolved: true, sos_alert: sosAlert, sms: smsResults });
@@ -798,7 +916,7 @@ app.get("/api/location/share/:share_code", async (req, res) => {
 // Start SOS alert (EmergencyAlert) for current user
 app.post("/api/sos/start", requireAuth, async (req, res) => {
   const { user_id } = req.user;
-  const { type } = req.body || {};
+  const { type, latitude, longitude } = req.body || {};
 
   const alertType = type === "Medium" ? "Medium" : "SOS";
   const { data, error } = await supabase
@@ -819,9 +937,15 @@ app.post("/api/sos/start", requireAuth, async (req, res) => {
   }
 
   const contacts = await fetchUserContacts(user_id);
+  const user = await fetchUserProfile(user_id);
   const smsResults = await notifyContacts(
     contacts,
-    `SafeRoute alert: ${data.type} activated. Please check in and respond if you can help.`
+    buildEmergencySms({
+      alertType: data.type,
+      user,
+      latitude,
+      longitude,
+    })
   );
 
   res.status(201).json({
@@ -1422,5 +1546,3 @@ app.post("/api/sos/evidence", requireAuth, async (req, res) => {
 app.listen(port, '0.0.0.0', () => {
   console.log(`Backend running on http://0.0.0.0:${port}`);
 });
-
-
