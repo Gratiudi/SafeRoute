@@ -53,10 +53,11 @@ export default function ProfileScreen() {
   const [viewingPhotoUrl, setViewingPhotoUrl] = useState<string | null>(null);
 
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const evidenceBucket = process.env.EXPO_PUBLIC_SUPABASE_EVIDENCE_BUCKET || 'evidence';
 
   const getEvidenceUrl = (filePath: string) => {
     if (filePath.startsWith('http')) return filePath;
-    return `${supabaseUrl}/storage/v1/object/public/evidence/${filePath}`;
+    return `${supabaseUrl}/storage/v1/object/public/${evidenceBucket}/${filePath}`;
   };
 
   const handlePlayAudio = async (item: EvidenceItem) => {

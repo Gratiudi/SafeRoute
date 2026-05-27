@@ -21,6 +21,7 @@ const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
 const SMSETHIOPIA_API_KEY = process.env.SMSETHIOPIA_API_KEY;
 const SMSETHIOPIA_API_URL =
   process.env.SMSETHIOPIA_API_URL || "https://smsethiopia.com/api/sms/send";
+const EVIDENCE_BUCKET = process.env.SUPABASE_EVIDENCE_BUCKET || "evidence";
 const canSendSms =
   typeof SMSETHIOPIA_API_KEY === "string" &&
   SMSETHIOPIA_API_KEY.length > 0 &&
@@ -1014,28 +1015,28 @@ app.post("/api/sos/evidence", requireAuth, async (req, res) => {
       const contentType = type === "Audio" ? "audio/m4a" : "image/jpeg";
 
       let { error: uploadError } = await supabase.storage
-        .from("evidence")
+        .from(EVIDENCE_BUCKET)
         .upload(file_path, fileBuffer, {
           contentType,
           upsert: true,
         });
 
       // If bucket doesn't exist, try to create it dynamically
-      if (uploadError && uploadError.message?.includes("bucket not found")) {
-        console.log("Bucket 'evidence' not found. Creating it...");
-        const { error: bucketError } = await supabase.storage.createBucket("evidence", {
+      if (uploadError && uploadError.message?.toLowerCase().includes("bucket not found")) {
+        console.log(`Bucket '${EVIDENCE_BUCKET}' not found. Creating it...`);
+        const { error: bucketError } = await supabase.storage.createBucket(EVIDENCE_BUCKET, {
           public: true,
         });
         if (!bucketError) {
           const { error: retryError } = await supabase.storage
-            .from("evidence")
+            .from(EVIDENCE_BUCKET)
             .upload(file_path, fileBuffer, {
               contentType,
               upsert: true,
             });
           uploadError = retryError;
         } else {
-          console.error("Failed to create bucket 'evidence':", bucketError);
+          console.error(`Failed to create bucket '${EVIDENCE_BUCKET}':`, bucketError);
         }
       }
 
@@ -1558,32 +1559,6 @@ app.get("/api/sos/evidence/:alertId", requireAuth, async (req, res) => {
   }
 
   res.json(data || []);
-});
-
-// Post evidence metadata for SOS alerts (UC-08)
-app.post("/api/sos/evidence", requireAuth, async (req, res) => {
-  const { alert_id, type, file_path } = req.body;
-
-  if (!alert_id || !type || !file_path) {
-    return res.status(400).json({ error: "alert_id, type, and file_path are required" });
-  }
-
-  const { data, error } = await supabase
-    .from("emergency_evidence")
-    .insert([{
-      alert_id,
-      type,
-      file_path
-    }])
-    .select("*")
-    .single();
-
-  if (error) {
-    console.error("Supabase error (evidence):", error);
-    return res.status(400).json({ error: error.message });
-  }
-
-  res.status(201).json(data);
 });
 
 app.listen(port, '0.0.0.0', () => {
