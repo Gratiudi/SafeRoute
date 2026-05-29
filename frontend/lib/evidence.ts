@@ -1,18 +1,35 @@
 import { authedApiFetch } from "./api";
 import { Audio } from "expo-av";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 
 let captureInterval: NodeJS.Timeout | null = null;
 let currentRecording: Audio.Recording | null = null;
+let captureSessionId = 0;
+
+async function waitForFileToExist(localUri: string, attempts = 10, delayMs = 200) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const info = await FileSystem.getInfoAsync(localUri);
+    if (info.exists) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return false;
+}
 
 export const startEvidenceCapture = (alertId: string, token: string) => {
   if (captureInterval) {
     clearInterval(captureInterval);
   }
+  captureSessionId += 1;
+  const sessionId = captureSessionId;
 
   // Define a function to record and upload a snippet of audio
   const recordAndUploadSnippet = async () => {
+    let recording: Audio.Recording | null = null;
     try {
+      if (sessionId !== captureSessionId) return;
+
       console.log("[EvidenceCapture] Starting audio snippet recording...");
       
       // Request permission
@@ -27,7 +44,7 @@ export const startEvidenceCapture = (alertId: string, token: string) => {
         playsInSilentModeIOS: true,
       });
 
-      const recording = new Audio.Recording();
+      recording = new Audio.Recording();
       currentRecording = recording;
       
       await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
@@ -36,9 +53,12 @@ export const startEvidenceCapture = (alertId: string, token: string) => {
       // Record for 5 seconds
       await new Promise((resolve) => setTimeout(resolve, 5000));
 
+      if (sessionId !== captureSessionId || currentRecording !== recording) {
+        return;
+      }
+
       await recording.stopAndUnloadAsync();
       const localUri = recording.getURI();
-      currentRecording = null;
 
       if (!localUri) {
         console.warn("[EvidenceCapture] Failed to get recording local URI.");
@@ -46,6 +66,12 @@ export const startEvidenceCapture = (alertId: string, token: string) => {
       }
 
       console.log("[EvidenceCapture] Audio recorded at:", localUri);
+
+      const fileExists = await waitForFileToExist(localUri);
+      if (!fileExists) {
+        console.warn("[EvidenceCapture] Audio file not found after recording:", localUri);
+        return;
+      }
 
       // Read file as base64
       const base64 = await FileSystem.readAsStringAsync(localUri, {
@@ -69,6 +95,10 @@ export const startEvidenceCapture = (alertId: string, token: string) => {
       console.log("[EvidenceCapture] Successfully uploaded audio evidence snippet.");
     } catch (e) {
       console.error("[EvidenceCapture] Audio snippet record/upload failed:", e);
+    } finally {
+      if (recording && currentRecording === recording) {
+        currentRecording = null;
+      }
     }
   };
 
@@ -111,6 +141,8 @@ export const uploadPhotoEvidence = async (alertId: string, token: string, localU
 };
 
 export const stopEvidenceCapture = async () => {
+  captureSessionId += 1;
+
   if (captureInterval) {
     clearInterval(captureInterval);
     captureInterval = null;
