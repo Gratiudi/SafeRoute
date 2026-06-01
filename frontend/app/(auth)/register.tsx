@@ -149,7 +149,10 @@ export default function RegisterScreen() {
       </View>
 
       <Text style={styles.footerText}>
-        Already have an account? <Link href="/(auth)/login">Sign in</Link>
+        Already have an account?{' '}
+        <Text style={styles.linkText} onPress={() => router.push('/(auth)/login')}>
+          Login
+        </Text>
       </Text>
     </ScrollView>
   );
@@ -241,6 +244,10 @@ const styles = StyleSheet.create({
   footerText: {
     textAlign: 'center',
     color: '#475569',
+  },
+  linkText: {
+    color: '#7C3AED',
+    fontWeight: '600',
   },
 });
 
