@@ -53,6 +53,14 @@ export default function ProfileScreen() {
   const [soundObject, setSoundObject] = useState<Audio.Sound | null>(null);
   const [viewingPhotoUrl, setViewingPhotoUrl] = useState<string | null>(null);
 
+  // Password gate state
+  const [evidenceUnlocked, setEvidenceUnlocked] = useState(false);
+  const [passwordGateVisible, setPasswordGateVisible] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordVerifying, setPasswordVerifying] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
   // Fetch a short-lived signed URL from the backend (bucket is private, public URLs return 400)
   const getSignedUrl = async (filePath: string): Promise<string> => {
     if (filePath.startsWith('http')) return filePath;
@@ -223,12 +231,33 @@ export default function ProfileScreen() {
     <ScrollView contentContainerStyle={styles.container}>
       {/* Tabs */}
       <View style={styles.tabBar}>
-        <Pressable style={[styles.tab, activeTab === 'profile' && styles.tabActive]} onPress={() => setActiveTab('profile')}>
+        <Pressable
+          style={[styles.tab, activeTab === 'profile' && styles.tabActive]}
+          onPress={() => {
+            setActiveTab('profile');
+            // Re-lock evidence when leaving the tab
+            setEvidenceUnlocked(false);
+          }}
+        >
           <Text style={[styles.tabText, activeTab === 'profile' && styles.tabTextActive]}>Profile</Text>
         </Pressable>
-        <Pressable style={[styles.tab, activeTab === 'evidence' && styles.tabActive]} onPress={() => setActiveTab('evidence')}>
+        <Pressable
+          style={[styles.tab, activeTab === 'evidence' && styles.tabActive]}
+          onPress={() => {
+            if (evidenceUnlocked) {
+              setActiveTab('evidence');
+            } else {
+              // Show password gate first
+              setPasswordInput('');
+              setPasswordError(null);
+              setShowPassword(false);
+              setPasswordGateVisible(true);
+            }
+          }}
+        >
           <View style={styles.tabRow}>
             <Text style={[styles.tabText, activeTab === 'evidence' && styles.tabTextActive]}>Alert Evidence</Text>
+            {!evidenceUnlocked && <MaterialIcons name="lock" size={13} color={activeTab === 'evidence' ? '#FFFFFF' : '#94A3B8'} />}
             {stats.sosUsed > 0 && (
               <View style={styles.badge}><Text style={styles.badgeText}>{stats.sosUsed}</Text></View>
             )}
@@ -493,6 +522,111 @@ export default function ProfileScreen() {
         </>
       )}
 
+      {/* Password Gate Modal */}
+      <Modal transparent visible={passwordGateVisible} animationType="fade" onRequestClose={() => setPasswordGateVisible(false)}>
+        <View style={styles.gateOverlay}>
+          <View style={styles.gateCard}>
+            {/* Icon */}
+            <View style={styles.gateLockIconWrap}>
+              <MaterialIcons name="lock" size={32} color="#7C3AED" />
+            </View>
+
+            <Text style={styles.gateTitle}>Evidence Protected</Text>
+            <Text style={styles.gateSub}>
+              Enter your account password to access your emergency evidence.
+            </Text>
+
+            {/* Password field */}
+            <View style={[styles.gateInputRow, passwordError ? styles.gateInputError : null]}>
+              <MaterialIcons name="lock-outline" size={18} color="#94A3B8" />
+              <TextInput
+                style={styles.gateInput}
+                placeholder="Password"
+                placeholderTextColor="#94A3B8"
+                secureTextEntry={!showPassword}
+                value={passwordInput}
+                onChangeText={(v) => { setPasswordInput(v); setPasswordError(null); }}
+                autoCapitalize="none"
+                returnKeyType="done"
+                onSubmitEditing={async () => {
+                  if (!passwordInput.trim() || passwordVerifying) return;
+                  setPasswordVerifying(true);
+                  setPasswordError(null);
+                  try {
+                    await authedApiFetch('/api/auth/verify-password', token!, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ password: passwordInput }),
+                    });
+                    setEvidenceUnlocked(true);
+                    setPasswordGateVisible(false);
+                    setActiveTab('evidence');
+                    setPasswordInput('');
+                  } catch (e: any) {
+                    setPasswordError(e?.message || 'Incorrect password');
+                  } finally {
+                    setPasswordVerifying(false);
+                  }
+                }}
+              />
+              <Pressable onPress={() => setShowPassword((v) => !v)}>
+                <MaterialIcons name={showPassword ? 'visibility-off' : 'visibility'} size={18} color="#94A3B8" />
+              </Pressable>
+            </View>
+
+            {passwordError ? (
+              <View style={styles.gateErrorRow}>
+                <MaterialIcons name="error-outline" size={14} color="#DC2626" />
+                <Text style={styles.gateErrorText}>{passwordError}</Text>
+              </View>
+            ) : null}
+
+            {/* Actions */}
+            <View style={styles.gateActions}>
+              <Pressable
+                style={styles.gateCancelBtn}
+                onPress={() => { setPasswordGateVisible(false); setPasswordInput(''); setPasswordError(null); }}
+              >
+                <Text style={styles.gateCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.gateUnlockBtn, (!passwordInput.trim() || passwordVerifying) && styles.buttonDisabled]}
+                onPress={async () => {
+                  if (!passwordInput.trim() || passwordVerifying) return;
+                  setPasswordVerifying(true);
+                  setPasswordError(null);
+                  try {
+                    await authedApiFetch('/api/auth/verify-password', token!, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ password: passwordInput }),
+                    });
+                    setEvidenceUnlocked(true);
+                    setPasswordGateVisible(false);
+                    setActiveTab('evidence');
+                    setPasswordInput('');
+                  } catch (e: any) {
+                    setPasswordError(e?.message || 'Incorrect password');
+                  } finally {
+                    setPasswordVerifying(false);
+                  }
+                }}
+                disabled={!passwordInput.trim() || passwordVerifying}
+              >
+                {passwordVerifying ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <MaterialIcons name="lock-open" size={16} color="#FFFFFF" />
+                )}
+                <Text style={styles.gateUnlockText}>
+                  {passwordVerifying ? 'Verifying...' : 'Unlock'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Photo Viewer Modal */}
       <Modal transparent visible={!!viewingPhotoUrl} animationType="fade" onRequestClose={() => setViewingPhotoUrl(null)}>
         <View style={styles.photoOverlay}>
@@ -599,4 +733,20 @@ const styles = StyleSheet.create({
   photoModalContent: { width: '90%', height: '80%', justifyContent: 'center', alignItems: 'center' },
   photoFullImage: { width: '100%', height: '100%' },
   photoCloseBtn: { position: 'absolute', top: -40, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8 },
+  // Password Gate Modal styles
+  gateOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  gateCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, alignItems: 'center', gap: 14, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 20, elevation: 10 },
+  gateLockIconWrap: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#F5F3FF', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#DDD6FE' },
+  gateTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
+  gateSub: { fontSize: 13, color: '#64748B', textAlign: 'center', lineHeight: 19 },
+  gateInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#F8FAFC', width: '100%' },
+  gateInputError: { borderColor: '#FCA5A5', backgroundColor: '#FFF5F5' },
+  gateInput: { flex: 1, fontSize: 15, color: '#0F172A' },
+  gateErrorRow: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start' },
+  gateErrorText: { color: '#DC2626', fontSize: 12, fontWeight: '500' },
+  gateActions: { flexDirection: 'row', gap: 10, width: '100%', marginTop: 4 },
+  gateCancelBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center' },
+  gateCancelText: { color: '#475569', fontWeight: '600' },
+  gateUnlockBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderRadius: 12, backgroundColor: '#7C3AED' },
+  gateUnlockText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
 });

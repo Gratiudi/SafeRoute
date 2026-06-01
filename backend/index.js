@@ -585,6 +585,34 @@ app.post('/api/auth/login', async (req, res) => {
   });
 });
 
+// VERIFY PASSWORD — confirms the current user's password without re-issuing a token.
+// Used by the app to gate access to sensitive sections (e.g. Evidence tab).
+app.post('/api/auth/verify-password', requireAuth, async (req, res) => {
+  const { user_id } = req.user;
+  const { password } = req.body;
+
+  if (!password) {
+    return res.status(400).json({ error: 'password is required' });
+  }
+
+  const { data: user, error } = await supabase
+    .from('users')
+    .select('password')
+    .eq('user_id', user_id)
+    .single();
+
+  if (error || !user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  const matches = await bcrypt.compare(password, user.password);
+  if (!matches) {
+    return res.status(401).json({ error: 'Incorrect password' });
+  }
+
+  res.json({ ok: true });
+});
+
 // List current user's routes (protected)
 app.get("/api/routes", requireAuth, async (req, res) => {
   const { user_id } = req.user;
