@@ -1687,8 +1687,7 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
       }
 
       // Sample coordinates along the path to keep calculations performant.
-      // For short routes, sample every point. For longer ones, sample every Nth point.
-      const maxSamples = 30;
+      const maxSamples = 20;
       const step = Math.max(1, Math.floor(coords.length / maxSamples));
       const sampledCoords = [];
       for (let i = 0; i < coords.length; i += step) {
@@ -1704,53 +1703,19 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
       for (const [lng, lat] of sampledCoords) {
         let pointScore = baseScore;
 
-        // 1. Calculate Incident Penalty at this point
+        // 1. Simple Incident Check (within 200m)
         let pointIncidentPenalty = 0;
         if (incidents && incidents.length > 0) {
           for (const incident of incidents) {
             const dist = getDistanceMeters(lat, lng, incident.latitude, incident.longitude);
-            if (dist <= 150) {
-              // Base weight by category
-              let weight = 0.10;
-              const cat = (incident.category || "").toLowerCase();
-              if (cat.includes("assault") || cat.includes("violence") || cat.includes("weapon")) {
-                weight = 0.25;
-              } else if (cat.includes("theft") || cat.includes("robbery") || cat.includes("mugging")) {
-                weight = 0.15;
-              } else if (cat.includes("harassment") || cat.includes("stalking")) {
-                weight = 0.12;
-              }
-
-              // Recency time decay over 30 days
-              const daysOld = (new Date() - new Date(incident.occurred_at)) / (1000 * 60 * 60 * 24);
-              let decay = 1.0;
-              if (daysOld >= 0 && daysOld < 30) {
-                decay = (30 - daysOld) / 30;
-              } else if (daysOld >= 30) {
-                decay = 0.05; // tiny residual penalty for historical hot-spots
-              }
-
-              // Distance decay (stronger penalty closer to incident)
-              let distDecay = 1.0;
-              if (dist > 50) {
-                distDecay = (150 - dist) / 100;
-              }
-
-              let penalty = weight * decay * distDecay;
-
-              // Night-time factor multiplier
-              if (time_of_day === "night") {
-                penalty *= 1.5;
-              }
-
-              pointIncidentPenalty += penalty;
+            if (dist <= 200) {
+              pointIncidentPenalty += 0.20; // Subtract 20% safety per nearby crime report
             }
           }
         }
-        // Cap point incident penalty at 0.70 to avoid complete zero/negative scores at single points
-        pointScore -= Math.min(pointIncidentPenalty, 0.70);
+        pointScore -= Math.min(pointIncidentPenalty, 0.60); // Cap incident penalty at 60%
 
-        // 2. Calculate Lighting/Density Bonus at this point
+        // 2. Simple Safety Factor Check (within 200m)
         let pointLightingBonus = 0;
         let pointDensityBonus = 0;
 
@@ -1765,47 +1730,20 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
               factor.locations.longitude
             );
 
-            if (dist <= 100) {
-              const distWeight = (100 - dist) / 100;
-
-              // Lighting score calculation
+            if (dist <= 200) {
+              // Street lighting impact
               if (factor.light_level !== null && factor.light_level !== undefined) {
-                if (time_of_day === "night") {
-                  if (factor.light_level > 0.6) {
-                    pointLightingBonus = Math.max(
-                      pointLightingBonus,
-                      0.10 * factor.light_level * distWeight
-                    );
-                  } else if (factor.light_level < 0.4) {
-                    // Dark street penalty at night
-                    pointLightingBonus = Math.min(
-                      pointLightingBonus,
-                      -0.12 * (1 - factor.light_level) * distWeight
-                    );
-                  }
-                } else {
-                  // Small daylight illumination bonus
-                  pointLightingBonus = Math.max(
-                    pointLightingBonus,
-                    0.02 * factor.light_level * distWeight
-                  );
+                if (factor.light_level > 0.5) {
+                  pointLightingBonus = 0.10; // +10% for well-lit street
+                } else if (factor.light_level <= 0.5 && time_of_day === "night") {
+                  pointLightingBonus = -0.10; // -10% for dark street at night
                 }
               }
 
-              // People density calculation
+              // Crowd density impact
               if (factor.people_density !== null && factor.people_density !== undefined) {
-                if (time_of_day === "night") {
-                  // Moderate crowd is safe at night, avoid empty areas
-                  pointDensityBonus = Math.max(
-                    pointDensityBonus,
-                    0.05 * factor.people_density * distWeight
-                  );
-                } else {
-                  // High density is good during the day
-                  pointDensityBonus = Math.max(
-                    pointDensityBonus,
-                    0.07 * factor.people_density * distWeight
-                  );
+                if (factor.people_density > 0.5) {
+                  pointDensityBonus = 0.05; // +5% for active populated street
                 }
               }
             }
@@ -1813,18 +1751,10 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
         }
 
         pointScore += pointLightingBonus + pointDensityBonus;
-        // Clamp point safety score between 0.05 and 1.00
-        totalPointScore += clamp(pointScore, 0.05, 1.0);
+        totalPointScore += clamp(pointScore, 0.10, 1.0);
       }
 
       let routeSafetyAverage = totalPointScore / Math.max(1, sampledCoords.length);
-
-      // 3. Final Route-wide Adjustments
-      if (isHighway) {
-        routeSafetyAverage -= 0.05; // walking along highway is less safe
-      } else {
-        routeSafetyAverage += 0.05; // local walking street is better
-      }
 
       // Add a slight preference for the first route option from provider
       routeSafetyAverage += idx === 0 ? 0.02 : -0.01 * idx;
