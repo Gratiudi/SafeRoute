@@ -19,6 +19,7 @@ app.use(express.urlencoded({ limit: "20mb", extended: true }));
 const otpStore = new Map();
 
 const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
+const SMS_PROVIDER = (process.env.SMS_PROVIDER || "auto").toLowerCase();
 const SMSETHIOPIA_API_KEY = process.env.SMSETHIOPIA_API_KEY;
 const SMSETHIOPIA_API_URL =
   process.env.SMSETHIOPIA_API_URL || "https://smsethiopia.com/api/sms/send";
@@ -134,21 +135,82 @@ async function fetchUserProfile(user_id) {
 
 function toMsisdn(phoneNumber) {
   const digits = String(phoneNumber || "").replace(/[^\d]/g, "");
-  if (digits.startsWith("0")) return `251${digits.slice(1)}`;
-  return digits;
+  if (digits.startsWith("0")) return `+251${digits.slice(1)}`;
+  if (digits.startsWith("251")) return `+${digits}`;
+  return `+${digits}`;
 }
 
-const { sendSMS: sendTwilioSMS } = require("./services/twilioService");
+function toSmsethiopiaMsisdn(phoneNumber) {
+  return toMsisdn(phoneNumber).replace(/^\+/, "");
+}
 
-const { sendSMS } = require("./services/twilioService");
+const { sendSMS: sendTwilioSms } = require("./services/twilioService");
+
+async function sendSmsethiopiaSms(to, body) {
+  if (!canSendSms) {
+    throw new Error("SMSEthiopia is not configured");
+  }
+
+  const response = await fetch(SMSETHIOPIA_API_URL, {
+    method: "POST",
+    headers: {
+      KEY: SMSETHIOPIA_API_KEY,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      msisdn: toSmsethiopiaMsisdn(to),
+      text: body,
+    }),
+  });
+
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    // Keep the raw response text for the error below.
+  }
+
+  if (!response.ok || json?.status === "error") {
+    const errMsg = json?.message || text || `SMSEthiopia HTTP ${response.status}`;
+    const err = new Error(errMsg);
+    // Tag whitelist errors so callers can fall back gracefully
+    if (typeof errMsg === "string" && errMsg.includes("WHITELISTED")) {
+      err.code = "SMSETHIOPIA_NOT_WHITELISTED";
+    }
+    throw err;
+  }
+
+  return {
+    status: "sent",
+    provider: "smsethiopia",
+    response: json,
+  };
+}
 
 async function sendSms(to, body) {
   const msisdn = toMsisdn(to);
 
+  if (SMS_PROVIDER === "smsethiopia") {
+    console.log("Sending SMS via SMSEthiopia...");
+    return sendSmsethiopiaSms(msisdn, body);
+  }
+
+  if (SMS_PROVIDER === "twilio") {
+    console.log("Sending SMS via Twilio...");
+    const result = await sendTwilioSms(msisdn, body);
+    console.log("Twilio success:", result.sid);
+    return {
+      status: "sent",
+      provider: "twilio",
+      sid: result.sid,
+    };
+  }
+
   try {
     console.log("📲 Sending SMS via Twilio...");
 
-    const result = await sendSMS(msisdn, body);
+    const result = await sendTwilioSms(msisdn, body);
 
     console.log("Twilio success:", result.sid);
 
@@ -159,6 +221,25 @@ async function sendSms(to, body) {
     };
   } catch (err) {
     console.error("❌ Twilio failed:", err.message);
+
+    // Try SMSEthiopia as fallback (skip if Twilio also isn't configured)
+    if (canSendSms) {
+      try {
+        console.log("Falling back to SMSEthiopia...");
+        return await sendSmsethiopiaSms(msisdn, body);
+      } catch (fallbackErr) {
+        // If the number isn't whitelisted on the SMSEthiopia starter plan,
+        // log it and drop through to simulation so the alert still fires.
+        if (fallbackErr.code === "SMSETHIOPIA_NOT_WHITELISTED") {
+          console.warn(
+            `SMSEthiopia: ${msisdn} is not whitelisted on this starter campaign. ` +
+            "Whitelist it via the SMSEthiopia whitelist API, or upgrade your plan."
+          );
+        } else {
+          console.error("SMSEthiopia fallback failed:", fallbackErr.message);
+        }
+      }
+    }
 
     console.log(`\n=== SIMULATED SMS TO ${msisdn} ===\n${body}\n==============================\n`);
 
@@ -250,7 +331,7 @@ app.get("/api/health", (req, res) => {
    }
 
    try {
-     const result = await sendSMS(
+     const result = await sendTwilioSms(
        phone_number,
        message || "SafeRoute Twilio test message 🚀"
      );
@@ -1042,23 +1123,15 @@ app.post("/api/sos/evidence", requireAuth, async (req, res) => {
           upsert: true,
         });
 
-      // If bucket doesn't exist, try to create it dynamically
+      // If the bucket doesn't exist surface a clear message — it must be
+      // created manually in the Supabase dashboard (Storage > New bucket)
+      // because the backend uses the anon key which cannot manage buckets.
       if (uploadError && uploadError.message?.toLowerCase().includes("bucket not found")) {
-        console.log(`Bucket '${EVIDENCE_BUCKET}' not found. Creating it...`);
-        const { error: bucketError } = await supabase.storage.createBucket(EVIDENCE_BUCKET, {
-          public: true,
-        });
-        if (!bucketError) {
-          const { error: retryError } = await supabase.storage
-            .from(EVIDENCE_BUCKET)
-            .upload(file_path, fileBuffer, {
-              contentType,
-              upsert: true,
-            });
-          uploadError = retryError;
-        } else {
-          console.error(`Failed to create bucket '${EVIDENCE_BUCKET}':`, bucketError);
-        }
+        console.error(
+          `Supabase Storage bucket '${EVIDENCE_BUCKET}' does not exist. ` +
+          "Please create it in the Supabase dashboard: Storage → New bucket → " +
+          `name it '${EVIDENCE_BUCKET}', set it to private.`
+        );
       }
 
       if (uploadError) {
@@ -1124,6 +1197,47 @@ app.get("/api/sos/history/:alert_id/evidence", requireAuth, async (req, res) => 
   }
 
   res.json(data);
+});
+
+// Generate a short-lived signed URL for a private evidence file (protected)
+// GET /api/sos/evidence/signed-url?file_path=evidence/123/audio_xyz.m4a
+app.get("/api/sos/evidence/signed-url", requireAuth, async (req, res) => {
+  const { user_id } = req.user;
+  const { file_path } = req.query;
+
+  if (!file_path || typeof file_path !== "string") {
+    return res.status(400).json({ error: "file_path query parameter is required" });
+  }
+
+  // Verify the path belongs to an alert owned by this user:
+  // file paths look like "evidence/<alert_id>/audio_xxx.m4a"
+  const pathParts = file_path.split("/");
+  const alertIdFromPath = pathParts.length >= 2 ? pathParts[1] : null;
+
+  if (alertIdFromPath) {
+    const { error: alertError } = await supabase
+      .from("emergency_alerts")
+      .select("alert_id")
+      .eq("alert_id", alertIdFromPath)
+      .eq("user_id", user_id)
+      .single();
+
+    if (alertError) {
+      return res.status(403).json({ error: "Access denied to this evidence file" });
+    }
+  }
+
+  // Create a signed URL valid for 15 minutes
+  const { data, error } = await supabase.storage
+    .from(EVIDENCE_BUCKET)
+    .createSignedUrl(file_path, 60 * 15);
+
+  if (error || !data?.signedUrl) {
+    console.error("Failed to create signed URL:", error);
+    return res.status(500).json({ error: error?.message || "Failed to generate signed URL" });
+  }
+
+  res.json({ signed_url: data.signedUrl });
 });
 
 // SOS / Emergency history for current user (alerts + evidence count)

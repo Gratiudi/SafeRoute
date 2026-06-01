@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, Image, Modal } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, Image, Modal } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useAuth } from '@/lib/auth';
 import { authedApiFetch } from '@/lib/api';
@@ -49,19 +49,24 @@ export default function ProfileScreen() {
   const [expandedAlert, setExpandedAlert] = useState<string | null>(null);
 
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [loadingEvidenceId, setLoadingEvidenceId] = useState<string | null>(null);
   const [soundObject, setSoundObject] = useState<Audio.Sound | null>(null);
   const [viewingPhotoUrl, setViewingPhotoUrl] = useState<string | null>(null);
 
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const evidenceBucket = process.env.EXPO_PUBLIC_SUPABASE_EVIDENCE_BUCKET || 'evidence';
-
-  const getEvidenceUrl = (filePath: string) => {
+  // Fetch a short-lived signed URL from the backend (bucket is private, public URLs return 400)
+  const getSignedUrl = async (filePath: string): Promise<string> => {
     if (filePath.startsWith('http')) return filePath;
-    return `${supabaseUrl}/storage/v1/object/public/${evidenceBucket}/${filePath}`;
+    const data = await authedApiFetch(
+      `/api/sos/evidence/signed-url?file_path=${encodeURIComponent(filePath)}`,
+      token!
+    );
+    if (!data?.signed_url) throw new Error('Could not obtain a signed URL for this file');
+    return data.signed_url as string;
   };
 
   const handlePlayAudio = async (item: EvidenceItem) => {
     try {
+      // Stop currently playing audio if the same item is tapped again
       if (playingAudioId === item.evidence_id) {
         if (soundObject) {
           await soundObject.stopAsync();
@@ -74,17 +79,27 @@ export default function ProfileScreen() {
 
       if (soundObject) {
         await soundObject.unloadAsync();
+        setSoundObject(null);
       }
 
-      setPlayingAudioId(item.evidence_id);
-      const url = getEvidenceUrl(item.file_path);
-      console.log("[ProfileScreen] Playing audio from:", url);
+      setLoadingEvidenceId(item.evidence_id);
+
+      // Get a signed URL so the private bucket file can be streamed
+      const url = await getSignedUrl(item.file_path);
+      console.log("[ProfileScreen] Playing audio from signed URL");
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+      });
 
       const { sound } = await Audio.Sound.createAsync(
         { uri: url },
         { shouldPlay: true }
       );
 
+      setLoadingEvidenceId(null);
+      setPlayingAudioId(item.evidence_id);
       setSoundObject(sound);
 
       sound.setOnPlaybackStatusUpdate(async (status) => {
@@ -96,15 +111,24 @@ export default function ProfileScreen() {
       });
     } catch (err) {
       console.error("Failed to play audio:", err);
-      alert("Unable to play this audio. The file may still be uploading or the storage bucket is offline.");
+      alert(`Unable to play audio: ${(err as any)?.message ?? 'Unknown error'}`);
+      setLoadingEvidenceId(null);
       setPlayingAudioId(null);
       setSoundObject(null);
     }
   };
 
-  const handleViewPhoto = (item: EvidenceItem) => {
-    const url = getEvidenceUrl(item.file_path);
-    setViewingPhotoUrl(url);
+  const handleViewPhoto = async (item: EvidenceItem) => {
+    try {
+      setLoadingEvidenceId(item.evidence_id);
+      const url = await getSignedUrl(item.file_path);
+      setLoadingEvidenceId(null);
+      setViewingPhotoUrl(url);
+    } catch (err) {
+      console.error("Failed to load photo:", err);
+      alert(`Unable to load photo: ${(err as any)?.message ?? 'Unknown error'}`);
+      setLoadingEvidenceId(null);
+    }
   };
 
   useEffect(() => {
@@ -405,21 +429,31 @@ export default function ProfileScreen() {
                             <Text style={styles.evidenceItemLabel}>{item.type} {idx + 1}</Text>
                           </View>
                           <Pressable
-                            style={styles.evidencePlayBtn}
-                            onPress={() => item.type === 'Audio' ? handlePlayAudio(item) : handleViewPhoto(item)}
+                            style={[styles.evidencePlayBtn, loadingEvidenceId === item.evidence_id && styles.buttonDisabled]}
+                            onPress={() => {
+                              if (loadingEvidenceId === item.evidence_id) return;
+                              if (item.type === 'Audio') handlePlayAudio(item);
+                              else handleViewPhoto(item);
+                            }}
                           >
-                            <MaterialIcons
-                              name={item.type === 'Audio'
-                                ? (playingAudioId === item.evidence_id ? 'stop' : 'play-arrow')
-                                : 'image'
-                              }
-                              size={14}
-                              color="#475569"
-                            />
+                            {loadingEvidenceId === item.evidence_id ? (
+                              <ActivityIndicator size="small" color="#7C3AED" />
+                            ) : (
+                              <MaterialIcons
+                                name={item.type === 'Audio'
+                                  ? (playingAudioId === item.evidence_id ? 'stop' : 'play-arrow')
+                                  : 'image'
+                                }
+                                size={14}
+                                color="#475569"
+                              />
+                            )}
                             <Text style={styles.evidencePlayText}>
-                              {item.type === 'Audio'
-                                ? (playingAudioId === item.evidence_id ? 'Stop' : 'Play')
-                                : 'View'
+                              {loadingEvidenceId === item.evidence_id
+                                ? 'Loading...'
+                                : item.type === 'Audio'
+                                  ? (playingAudioId === item.evidence_id ? 'Stop' : 'Play')
+                                  : 'View'
                               }
                             </Text>
                           </Pressable>
