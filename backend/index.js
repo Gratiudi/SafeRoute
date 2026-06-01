@@ -75,6 +75,21 @@ async function mapboxGeocode(name) {
   return { lng: Number(first.lon), lat: Number(first.lat) };
 }
 
+// Calculate distance in meters between two GPS coordinates using Haversine formula
+function getDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371e3; // Earth radius in meters
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 async function mapboxDirections(start, end) {
   if (MAPBOX_TOKEN) {
     const url = `https://api.mapbox.com/directions/v5/mapbox/walking/${start.lng},${start.lat};${end.lng},${end.lat}?geometries=geojson&overview=full&alternatives=true&access_token=${MAPBOX_TOKEN}`;
@@ -1625,37 +1640,201 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
 
   try {
     const directions = await mapboxDirections(start, end);
+
+    // Fetch all active incident reports
+    const { data: incidents, error: incidentsError } = await supabase
+      .from("incident_reports")
+      .select("category, latitude, longitude, occurred_at");
+
+    if (incidentsError) {
+      console.error("Error fetching incidents for routing:", incidentsError);
+    }
+
+    // Fetch all safety factors (joined with locations for coords)
+    const { data: factors, error: factorsError } = await supabase
+      .from("safety_factors")
+      .select(`
+        people_density,
+        light_level,
+        risk_score,
+        locations (
+          latitude,
+          longitude
+        )
+      `);
+
+    if (factorsError) {
+      console.error("Error fetching safety factors for routing:", factorsError);
+    }
+
     const routes = (directions.routes || []).map((route, idx) => {
-      // Simulate factors for UC-05 Safety-Based Routing Algorithm
       const isHighway = route.distance > 5000;
-      const peopleDensity = Math.random(); // 0 to 1
-      const lighting = Math.random(); // 0 to 1
-      
-      let dynamicScore = baseScore;
-      // High density is safer during day, maybe less safe at night
-      if (time_of_day === "day") {
-        dynamicScore += peopleDensity * 0.1;
-        dynamicScore += lighting * 0.05;
-      } else {
-        dynamicScore += lighting * 0.2; // lighting is very important at night
-        dynamicScore -= (1 - peopleDensity) * 0.1; // deserted areas less safe
-      }
-      
-      if (isHighway) {
-        dynamicScore -= 0.05; // Highways might be less safe for walking
-      } else {
-        dynamicScore += 0.05; // Local roads better
+      const coords = route.geometry?.coordinates || [];
+
+      // If no geometry/coordinates are present, fall back to baseScore simulation
+      if (coords.length === 0) {
+        let fallbackScore = baseScore;
+        if (isHighway) fallbackScore -= 0.05;
+        else fallbackScore += 0.05;
+        return {
+          id: `route-${idx + 1}`,
+          label: idx === 0 ? "Route option" : `Route option ${idx + 1}`,
+          distance_km: Math.round((route.distance / 1000) * 100) / 100,
+          duration_min: Math.round((route.duration / 60) * 10) / 10,
+          safety_score: clamp(fallbackScore, 0.1, 1.0),
+          geometry: route.geometry,
+        };
       }
 
-      // Add a slight preference for the first route returned by the provider
-      dynamicScore += (idx === 0 ? 0.02 : -0.01 * idx);
+      // Sample coordinates along the path to keep calculations performant.
+      // For short routes, sample every point. For longer ones, sample every Nth point.
+      const maxSamples = 30;
+      const step = Math.max(1, Math.floor(coords.length / maxSamples));
+      const sampledCoords = [];
+      for (let i = 0; i < coords.length; i += step) {
+        sampledCoords.push(coords[i]);
+      }
+      // Ensure the last coordinate is included
+      if (coords.length > 1 && (coords.length - 1) % step !== 0) {
+        sampledCoords.push(coords[coords.length - 1]);
+      }
+
+      let totalPointScore = 0;
+
+      for (const [lng, lat] of sampledCoords) {
+        let pointScore = baseScore;
+
+        // 1. Calculate Incident Penalty at this point
+        let pointIncidentPenalty = 0;
+        if (incidents && incidents.length > 0) {
+          for (const incident of incidents) {
+            const dist = getDistanceMeters(lat, lng, incident.latitude, incident.longitude);
+            if (dist <= 150) {
+              // Base weight by category
+              let weight = 0.10;
+              const cat = (incident.category || "").toLowerCase();
+              if (cat.includes("assault") || cat.includes("violence") || cat.includes("weapon")) {
+                weight = 0.25;
+              } else if (cat.includes("theft") || cat.includes("robbery") || cat.includes("mugging")) {
+                weight = 0.15;
+              } else if (cat.includes("harassment") || cat.includes("stalking")) {
+                weight = 0.12;
+              }
+
+              // Recency time decay over 30 days
+              const daysOld = (new Date() - new Date(incident.occurred_at)) / (1000 * 60 * 60 * 24);
+              let decay = 1.0;
+              if (daysOld >= 0 && daysOld < 30) {
+                decay = (30 - daysOld) / 30;
+              } else if (daysOld >= 30) {
+                decay = 0.05; // tiny residual penalty for historical hot-spots
+              }
+
+              // Distance decay (stronger penalty closer to incident)
+              let distDecay = 1.0;
+              if (dist > 50) {
+                distDecay = (150 - dist) / 100;
+              }
+
+              let penalty = weight * decay * distDecay;
+
+              // Night-time factor multiplier
+              if (time_of_day === "night") {
+                penalty *= 1.5;
+              }
+
+              pointIncidentPenalty += penalty;
+            }
+          }
+        }
+        // Cap point incident penalty at 0.70 to avoid complete zero/negative scores at single points
+        pointScore -= Math.min(pointIncidentPenalty, 0.70);
+
+        // 2. Calculate Lighting/Density Bonus at this point
+        let pointLightingBonus = 0;
+        let pointDensityBonus = 0;
+
+        if (factors && factors.length > 0) {
+          for (const factor of factors) {
+            if (!factor.locations || factor.locations.latitude === undefined) continue;
+
+            const dist = getDistanceMeters(
+              lat,
+              lng,
+              factor.locations.latitude,
+              factor.locations.longitude
+            );
+
+            if (dist <= 100) {
+              const distWeight = (100 - dist) / 100;
+
+              // Lighting score calculation
+              if (factor.light_level !== null && factor.light_level !== undefined) {
+                if (time_of_day === "night") {
+                  if (factor.light_level > 0.6) {
+                    pointLightingBonus = Math.max(
+                      pointLightingBonus,
+                      0.10 * factor.light_level * distWeight
+                    );
+                  } else if (factor.light_level < 0.4) {
+                    // Dark street penalty at night
+                    pointLightingBonus = Math.min(
+                      pointLightingBonus,
+                      -0.12 * (1 - factor.light_level) * distWeight
+                    );
+                  }
+                } else {
+                  // Small daylight illumination bonus
+                  pointLightingBonus = Math.max(
+                    pointLightingBonus,
+                    0.02 * factor.light_level * distWeight
+                  );
+                }
+              }
+
+              // People density calculation
+              if (factor.people_density !== null && factor.people_density !== undefined) {
+                if (time_of_day === "night") {
+                  // Moderate crowd is safe at night, avoid empty areas
+                  pointDensityBonus = Math.max(
+                    pointDensityBonus,
+                    0.05 * factor.people_density * distWeight
+                  );
+                } else {
+                  // High density is good during the day
+                  pointDensityBonus = Math.max(
+                    pointDensityBonus,
+                    0.07 * factor.people_density * distWeight
+                  );
+                }
+              }
+            }
+          }
+        }
+
+        pointScore += pointLightingBonus + pointDensityBonus;
+        // Clamp point safety score between 0.05 and 1.00
+        totalPointScore += clamp(pointScore, 0.05, 1.0);
+      }
+
+      let routeSafetyAverage = totalPointScore / Math.max(1, sampledCoords.length);
+
+      // 3. Final Route-wide Adjustments
+      if (isHighway) {
+        routeSafetyAverage -= 0.05; // walking along highway is less safe
+      } else {
+        routeSafetyAverage += 0.05; // local walking street is better
+      }
+
+      // Add a slight preference for the first route option from provider
+      routeSafetyAverage += idx === 0 ? 0.02 : -0.01 * idx;
 
       return {
         id: `route-${idx + 1}`,
         label: idx === 0 ? "Route option" : `Route option ${idx + 1}`,
         distance_km: Math.round((route.distance / 1000) * 100) / 100,
         duration_min: Math.round((route.duration / 60) * 10) / 10,
-        safety_score: clamp(dynamicScore, 0, 1),
+        safety_score: clamp(routeSafetyAverage, 0.1, 1.0),
         geometry: route.geometry,
       };
     });
