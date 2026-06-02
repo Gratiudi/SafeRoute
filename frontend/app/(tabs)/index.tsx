@@ -34,11 +34,13 @@ export default function HomeScreen() {
   const mediumActive = useMemo(() => !!mediumAlertId && !!mediumExpiresAt, [mediumAlertId, mediumExpiresAt]);
 
   const [activeSosAlertId, setActiveSosAlertId] = useState<string | null>(null);
+  const [activeSosShareCode, setActiveSosShareCode] = useState<string | null>(null);
   const [activeSosOpen, setActiveSosOpen] = useState(false);
   const [activeSosDuration, setActiveSosDuration] = useState(0);
 
   const cameraRef = useRef<any>(null);
   const activeSosAlertIdRef = useRef<string | null>(null);
+  const activeSosShareCodeRef = useRef<string | null>(null);
   const tokenRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -46,8 +48,36 @@ export default function HomeScreen() {
   }, [activeSosAlertId]);
 
   useEffect(() => {
+    activeSosShareCodeRef.current = activeSosShareCode;
+  }, [activeSosShareCode]);
+
+  useEffect(() => {
     tokenRef.current = token;
   }, [token]);
+
+  const updateLiveSosLocation = async () => {
+    const shareCode = activeSosShareCodeRef.current;
+    const tok = tokenRef.current;
+    if (!shareCode || !tok) return;
+
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+
+      const location = await Location.getCurrentPositionAsync({});
+      await authedApiFetch('/api/location/share/update', tok, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          share_code: shareCode,
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        }),
+      });
+    } catch (err) {
+      console.warn("[HomeScreen] Failed to update live SOS location:", err);
+    }
+  };
 
   const captureAndUploadPhoto = async () => {
     const aid = activeSosAlertIdRef.current;
@@ -78,8 +108,8 @@ export default function HomeScreen() {
 
   // Active SOS timer
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
-    let initialPhotoTimeout: NodeJS.Timeout | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let initialPhotoTimeout: ReturnType<typeof setTimeout> | null = null;
 
     if (activeSosOpen) {
       // Warm up camera and capture initial photo after 1.5 seconds
@@ -105,6 +135,21 @@ export default function HomeScreen() {
       if (initialPhotoTimeout) clearTimeout(initialPhotoTimeout);
     };
   }, [activeSosOpen]);
+
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    if (activeSosOpen && activeSosShareCode) {
+      void updateLiveSosLocation();
+      interval = setInterval(() => {
+        void updateLiveSosLocation();
+      }, 10000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [activeSosOpen, activeSosShareCode]);
 
   const hasEscalatedRef = React.useRef(false);
 
@@ -229,6 +274,7 @@ export default function HomeScreen() {
       // Start capturing evidence for this SOS alert
       startEvidenceCapture(result.alert.alert_id, token);
       setActiveSosAlertId(result.alert.alert_id);
+      setActiveSosShareCode(result.share?.share_code ?? null);
       setActiveSosOpen(true);
 
       void fetchAlertHistory();
@@ -305,6 +351,7 @@ export default function HomeScreen() {
       if (result && result.sos_alert) {
          startEvidenceCapture(result.sos_alert.alert_id, token);
          setActiveSosAlertId(result.sos_alert.alert_id);
+         setActiveSosShareCode(result.share?.share_code ?? null);
          setActiveSosOpen(true);
       }
 
@@ -327,8 +374,20 @@ export default function HomeScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ alert_id: activeSosAlertId }),
       });
+      if (activeSosShareCode) {
+        try {
+          await authedApiFetch('/api/location/share/stop', token, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ share_code: activeSosShareCode }),
+          });
+        } catch (shareStopError) {
+          console.warn("[HomeScreen] Failed to stop live SOS location share:", shareStopError);
+        }
+      }
       stopEvidenceCapture();
       setActiveSosAlertId(null);
+      setActiveSosShareCode(null);
       setActiveSosOpen(false);
       showStatus('SOS ended. Evidence saved.');
       void fetchAlertHistory();

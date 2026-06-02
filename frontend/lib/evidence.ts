@@ -2,7 +2,7 @@ import { authedApiFetch } from "./api";
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system/legacy";
 
-let captureInterval: NodeJS.Timeout | null = null;
+let captureInterval: ReturnType<typeof setInterval> | null = null;
 let currentRecording: Audio.Recording | null = null;
 let captureSessionId = 0;
 

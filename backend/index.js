@@ -270,16 +270,61 @@ function mapsLink(latitude, longitude) {
   return `https://maps.google.com/?q=${lat},${lng}`;
 }
 
-function buildEmergencySms({ alertType, user, latitude, longitude, isEscalation = false }) {
+function getPublicBaseUrl(req) {
+  return (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+}
+
+function buildShareUrl(req, shareCode) {
+  return `${getPublicBaseUrl(req)}/api/location/share/${shareCode}`;
+}
+
+async function createLocationShare(user_id, req, latitude, longitude) {
+  const share_code = crypto.randomBytes(6).toString("hex");
+
+  await supabase
+    .from("location_shares")
+    .update({ is_active: false, ended_at: new Date().toISOString() })
+    .eq("user_id", user_id)
+    .eq("is_active", true);
+
+  const { data: share, error } = await supabase
+    .from("location_shares")
+    .insert([{ user_id, share_code, is_active: true }])
+    .select("*")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    await supabase.from("location_updates").insert([
+      {
+        share_id: share.share_id,
+        latitude: lat,
+        longitude: lng,
+      },
+    ]);
+  }
+
+  return {
+    ...share,
+    share_url: buildShareUrl(req, share.share_code),
+  };
+}
+
+function buildEmergencySms({ alertType, user, latitude, longitude, liveLocationUrl, isEscalation = false }) {
   const name = user?.full_name || "A SafeRoute user";
-  const locationUrl = mapsLink(latitude, longitude);
+  const locationUrl = liveLocationUrl || mapsLink(latitude, longitude);
   const reason = isEscalation
     ? "Their medium alert timer expired and escalated to SOS."
     : `${alertType} alert activated.`;
   return [
     `SafeRoute emergency alert from ${name}.`,
     reason,
-    locationUrl ? `Location: ${locationUrl}` : null,
+    locationUrl ? `Live location: ${locationUrl}` : null,
     "Please check in immediately.",
   ]
     .filter(Boolean)
@@ -942,6 +987,13 @@ app.post("/api/medium/escalate", requireAuth, async (req, res) => {
 
   const contacts = await fetchUserContacts(user_id);
   const user = await fetchUserProfile(user_id);
+  let share = null;
+  try {
+    share = await createLocationShare(user_id, req, latitude, longitude);
+  } catch (shareError) {
+    console.error("Supabase error (create SOS location share):", shareError);
+  }
+
   const smsResults = await notifyContacts(
     contacts,
     buildEmergencySms({
@@ -949,37 +1001,26 @@ app.post("/api/medium/escalate", requireAuth, async (req, res) => {
       user,
       latitude,
       longitude,
+      liveLocationUrl: share?.share_url,
       isEscalation: true,
     })
   );
 
-  res.status(201).json({ medium_resolved: true, sos_alert: sosAlert, sms: smsResults });
+  res.status(201).json({ medium_resolved: true, sos_alert: sosAlert, share, sms: smsResults });
 });
 
 // Location sharing: start a share session
 app.post("/api/location/share/start", requireAuth, async (req, res) => {
   const { user_id } = req.user;
-  const share_code = crypto.randomBytes(6).toString("hex");
+  const { latitude, longitude } = req.body || {};
 
-  await supabase
-    .from("location_shares")
-    .update({ is_active: false, ended_at: new Date().toISOString() })
-    .eq("user_id", user_id)
-    .eq("is_active", true);
-
-  const { data, error } = await supabase
-    .from("location_shares")
-    .insert([{ user_id, share_code, is_active: true }])
-    .select("*")
-    .single();
-
-  if (error) {
+  try {
+    const share = await createLocationShare(user_id, req, latitude, longitude);
+    res.status(201).json(share);
+  } catch (error) {
     console.error("Supabase error:", error);
     return res.status(400).json({ error: error.message });
   }
-
-  const share_url = `${req.protocol}://${req.get("host")}/api/location/share/${share_code}`;
-  res.status(201).json({ ...data, share_url });
 });
 
 // Location sharing: stop a share session
@@ -1127,6 +1168,13 @@ app.post("/api/sos/start", requireAuth, async (req, res) => {
 
   const contacts = await fetchUserContacts(user_id);
   const user = await fetchUserProfile(user_id);
+  let share = null;
+  try {
+    share = await createLocationShare(user_id, req, latitude, longitude);
+  } catch (shareError) {
+    console.error("Supabase error (create SOS location share):", shareError);
+  }
+
   const smsResults = await notifyContacts(
     contacts,
     buildEmergencySms({
@@ -1134,11 +1182,13 @@ app.post("/api/sos/start", requireAuth, async (req, res) => {
       user,
       latitude,
       longitude,
+      liveLocationUrl: share?.share_url,
     })
   );
 
   res.status(201).json({
     alert: data,
+    share,
     contacts: contacts || [],
     sms: smsResults,
   });
