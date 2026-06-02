@@ -60,6 +60,14 @@ export default function ProfileScreen() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordVerifying, setPasswordVerifying] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [changePasswordVisible, setChangePasswordVisible] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
+  const [changePasswordSuccess, setChangePasswordSuccess] = useState<string | null>(null);
+  const [changePasswordSaving, setChangePasswordSaving] = useState(false);
+  const [showChangePasswords, setShowChangePasswords] = useState(false);
 
   // Fetch a short-lived signed URL from the backend (bucket is private, public URLs return 400)
   const getSignedUrl = async (filePath: string): Promise<string> => {
@@ -215,6 +223,56 @@ export default function ProfileScreen() {
       setProfileError(e?.message || 'Unable to update profile');
     } finally {
       setProfileSaving(false);
+    }
+  };
+
+  const resetChangePasswordForm = () => {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setChangePasswordError(null);
+    setChangePasswordSuccess(null);
+    setShowChangePasswords(false);
+  };
+
+  const onChangePassword = async () => {
+    if (!token || changePasswordSaving) return;
+    setChangePasswordError(null);
+    setChangePasswordSuccess(null);
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setChangePasswordError('Fill in all password fields.');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setChangePasswordError('New password must be at least 6 characters.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setChangePasswordError('New passwords do not match.');
+      return;
+    }
+
+    setChangePasswordSaving(true);
+    try {
+      await authedApiFetch('/api/auth/change-password', token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+      });
+      setChangePasswordSuccess('Password changed successfully.');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (e: any) {
+      setChangePasswordError(e?.message || 'Unable to change password');
+    } finally {
+      setChangePasswordSaving(false);
     }
   };
 
@@ -381,7 +439,13 @@ export default function ProfileScreen() {
           {/* Account */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Account</Text>
-            <Pressable style={styles.outlineButtonRow}>
+            <Pressable
+              style={styles.outlineButtonRow}
+              onPress={() => {
+                resetChangePasswordForm();
+                setChangePasswordVisible(true);
+              }}
+            >
               <MaterialIcons name="lock" size={16} color="#0F172A" />
               <Text style={styles.outlineButtonRowText}>Change Password</Text>
             </Pressable>
@@ -627,6 +691,94 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
+      {/* Change Password Modal */}
+      <Modal
+        transparent
+        visible={changePasswordVisible}
+        animationType="fade"
+        onRequestClose={() => {
+          setChangePasswordVisible(false);
+          resetChangePasswordForm();
+        }}
+      >
+        <View style={styles.gateOverlay}>
+          <View style={styles.gateCard}>
+            <View style={styles.gateLockIconWrap}>
+              <MaterialIcons name="password" size={32} color="#7C3AED" />
+            </View>
+
+            <Text style={styles.gateTitle}>Change Password</Text>
+            <Text style={styles.gateSub}>Enter your current password and choose a new one.</Text>
+
+            {[
+              { value: currentPassword, setter: setCurrentPassword, placeholder: 'Current password' },
+              { value: newPassword, setter: setNewPassword, placeholder: 'New password' },
+              { value: confirmPassword, setter: setConfirmPassword, placeholder: 'Confirm new password' },
+            ].map(({ value, setter, placeholder }) => (
+              <View key={placeholder} style={[styles.gateInputRow, changePasswordError ? styles.gateInputError : null]}>
+                <MaterialIcons name="lock-outline" size={18} color="#94A3B8" />
+                <TextInput
+                  style={styles.gateInput}
+                  placeholder={placeholder}
+                  placeholderTextColor="#94A3B8"
+                  secureTextEntry={!showChangePasswords}
+                  value={value}
+                  onChangeText={(text) => {
+                    setter(text);
+                    setChangePasswordError(null);
+                    setChangePasswordSuccess(null);
+                  }}
+                  autoCapitalize="none"
+                />
+                <Pressable onPress={() => setShowChangePasswords((v) => !v)}>
+                  <MaterialIcons name={showChangePasswords ? 'visibility-off' : 'visibility'} size={18} color="#94A3B8" />
+                </Pressable>
+              </View>
+            ))}
+
+            {changePasswordError ? (
+              <View style={styles.gateErrorRow}>
+                <MaterialIcons name="error-outline" size={14} color="#DC2626" />
+                <Text style={styles.gateErrorText}>{changePasswordError}</Text>
+              </View>
+            ) : null}
+
+            {changePasswordSuccess ? (
+              <View style={styles.successRow}>
+                <MaterialIcons name="check-circle" size={14} color="#16A34A" />
+                <Text style={styles.successText}>{changePasswordSuccess}</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.gateActions}>
+              <Pressable
+                style={styles.gateCancelBtn}
+                onPress={() => {
+                  setChangePasswordVisible(false);
+                  resetChangePasswordForm();
+                }}
+              >
+                <Text style={styles.gateCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.gateUnlockBtn, changePasswordSaving && styles.buttonDisabled]}
+                onPress={onChangePassword}
+                disabled={changePasswordSaving}
+              >
+                {changePasswordSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <MaterialIcons name="save" size={16} color="#FFFFFF" />
+                )}
+                <Text style={styles.gateUnlockText}>
+                  {changePasswordSaving ? 'Saving...' : 'Save'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Photo Viewer Modal */}
       <Modal transparent visible={!!viewingPhotoUrl} animationType="fade" onRequestClose={() => setViewingPhotoUrl(null)}>
         <View style={styles.photoOverlay}>
@@ -744,6 +896,8 @@ const styles = StyleSheet.create({
   gateInput: { flex: 1, fontSize: 15, color: '#0F172A' },
   gateErrorRow: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start' },
   gateErrorText: { color: '#DC2626', fontSize: 12, fontWeight: '500' },
+  successRow: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start' },
+  successText: { color: '#16A34A', fontSize: 12, fontWeight: '500' },
   gateActions: { flexDirection: 'row', gap: 10, width: '100%', marginTop: 4 },
   gateCancelBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center' },
   gateCancelText: { color: '#475569', fontWeight: '600' },

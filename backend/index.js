@@ -628,6 +628,48 @@ app.post('/api/auth/verify-password', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// CHANGE PASSWORD — requires the current password before storing a new hash.
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+  const { user_id } = req.user;
+  const { current_password, new_password } = req.body || {};
+
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'current_password and new_password are required' });
+  }
+
+  if (String(new_password).length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters' });
+  }
+
+  const { data: user, error } = await supabase
+    .from('users')
+    .select('password')
+    .eq('user_id', user_id)
+    .single();
+
+  if (error || !user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  const matches = await bcrypt.compare(current_password, user.password);
+  if (!matches) {
+    return res.status(401).json({ error: 'Current password is incorrect' });
+  }
+
+  const password_hash = await bcrypt.hash(new_password, 10);
+  const { error: updateError } = await supabase
+    .from('users')
+    .update({ password: password_hash })
+    .eq('user_id', user_id);
+
+  if (updateError) {
+    console.error('Supabase error (change password):', updateError);
+    return res.status(400).json({ error: updateError.message });
+  }
+
+  res.json({ ok: true, message: 'Password changed successfully' });
+});
+
 // List current user's routes (protected)
 app.get("/api/routes", requireAuth, async (req, res) => {
   const { user_id } = req.user;
