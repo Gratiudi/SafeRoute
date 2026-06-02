@@ -46,9 +46,27 @@ async function fetchJson(url) {
 }
 
 async function mapboxGeocode(name) {
-  const queryName = name.toLowerCase().includes("addis ababa")
-    ? name
-    : `${name}, Addis Ababa, Ethiopia`;
+  const lower = name.toLowerCase();
+  const outOfCityKeywords = [
+    "adama", "nazret", "nazareth", "bishoftu", "debre zeyit", "debrezeit",
+    "hawassa", "awassa", "bahir dar", "bahirdar", "gondar", "gonder",
+    "mekelle", "mekele", "dire dawa", "diredawa", "harar", "jimma",
+    "dessie", "dese", "shashemene", "shashe", "nekemte", "arba minch",
+    "arbaminch", "sodo", "hosaina", "jijiga", "gambela", "gambella",
+    "asosa", "assosa", "sebeta", "burayu", "sululta", "legetafo",
+    "weliso", "waliso", "amibo", "fitche", "debre birhan", "debreberhan",
+    "dukem", "mojo", "modjo", "ziway", "batu", "ambo", "hossana",
+    "london", "paris", "new york"
+  ];
+  
+  const hasOutOfCityKeyword = outOfCityKeywords.some(keyword => {
+    const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+    return regex.test(lower);
+  });
+
+  const queryName = (hasOutOfCityKeyword && !lower.includes("addis ababa"))
+    ? `${name}, Ethiopia`
+    : (lower.includes("addis ababa") ? name : `${name}, Addis Ababa, Ethiopia`);
 
   if (MAPBOX_TOKEN) {
     const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
@@ -88,6 +106,13 @@ function getDistanceMeters(lat1, lon1, lat2, lon2) {
       Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+// Check if a coordinate is within Addis Ababa bounding box
+function isWithinAddisAbaba(coords) {
+  if (!coords) return false;
+  const { lat, lng } = coords;
+  return lat >= 8.83 && lat <= 9.10 && lng >= 38.62 && lng <= 38.90;
 }
 
 async function mapboxDirections(start, end) {
@@ -1729,6 +1754,18 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
     end = { lat: Number(end_lat), lng: Number(end_lng) };
   } else if (end_location_name) {
     end = await mapboxGeocode(end_location_name);
+  }
+
+  if (start && !isWithinAddisAbaba(start)) {
+    return res.status(400).json({
+      error: "Start location must be within Addis Ababa, Ethiopia.",
+    });
+  }
+
+  if (end && !isWithinAddisAbaba(end)) {
+    return res.status(400).json({
+      error: "Destination location must be within Addis Ababa, Ethiopia.",
+    });
   }
 
   if (!start || !end) {
