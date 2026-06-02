@@ -523,7 +523,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     backgroundColor: "#F8FAFC",
   },
-  input: { flex: 1 },
+  input: { flex: 1, color: '#0F172A' },
   timeRow: { flexDirection: "row", gap: 8 },
   timePill: {
     paddingVertical: 6,

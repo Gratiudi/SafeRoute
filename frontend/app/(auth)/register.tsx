@@ -4,6 +4,9 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Link, useRouter } from 'expo-router';
 import { useAuth } from '@/lib/auth';
 import { apiFetch } from '@/lib/api';
+import * as Location from 'expo-location';
+import { Camera } from 'expo-camera';
+import { Audio } from 'expo-av';
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -57,11 +60,33 @@ export default function RegisterScreen() {
       });
 
       await signUp(fullName.trim(), email.trim(), password, phoneNumber.trim());
+      
+      // Request permissions after successful signup
+      await requestPermissionsAfterSignup();
+      
       router.replace('/(tabs)');
     } catch (e: any) {
       setError(e?.message ?? 'Registration failed');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const requestPermissionsAfterSignup = async () => {
+    try {
+      // Request location permission
+      await Location.requestForegroundPermissionsAsync();
+      
+      // Request camera permission
+      await Camera.requestCameraPermissionsAsync();
+      
+      // Request microphone permission
+      await Audio.requestPermissionsAsync();
+      
+      console.log('[RegisterScreen] All permissions requested after signup');
+    } catch (err) {
+      console.warn('[RegisterScreen] Error requesting permissions:', err);
+      // Don't fail signup if permission requests fail
     }
   };
 

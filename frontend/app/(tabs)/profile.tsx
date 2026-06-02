@@ -825,7 +825,7 @@ const styles = StyleSheet.create({
   infoText: { color: '#475569' },
   formBlock: { gap: 12 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#F8FAFC' },
-  input: { flex: 1 },
+  input: { flex: 1, color: '#0F172A' },
   primaryButton: { alignItems: 'center', paddingVertical: 12, borderRadius: 12, backgroundColor: '#7C3AED' },
   primaryButtonText: { color: '#FFFFFF', fontWeight: '600' },
   buttonDisabled: { opacity: 0.6 },

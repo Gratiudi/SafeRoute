@@ -1114,4 +1114,50 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 15,
   },
+  contactSelectBlock: {
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 8,
+  },
+  contactSelectHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  contactSelectHint: {
+    color: '#64748B',
+    fontSize: 12,
+  },
+  contactSelectList: {
+    gap: 8,
+  },
+  contactChoice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  contactChoiceSelected: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#16A34A',
+  },
+  contactChoiceName: {
+    fontWeight: '600',
+    color: '#0F172A',
+    fontSize: 14,
+  },
+  contactChoiceMeta: {
+    color: '#64748B',
+    fontSize: 12,
+    marginTop: 2,
+  },
 });
