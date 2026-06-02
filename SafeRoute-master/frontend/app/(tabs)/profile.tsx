@@ -1,0 +1,752 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, Image, Modal } from 'react-native';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { useAuth } from '@/lib/auth';
+import { authedApiFetch } from '@/lib/api';
+import { useI18n, Language, CalendarType } from '@/lib/i18n';
+import { Audio } from 'expo-av';
+
+type Tab = 'profile' | 'evidence';
+
+type EvidenceItem = {
+  evidence_id: string;
+  alert_id: string;
+  type: 'Audio' | 'Photo';
+  file_path: string;
+  timestamp: string;
+};
+
+type AlertWithEvidence = {
+  alert_id: string;
+  type: string;
+  status: string;
+  created_at: string;
+  evidence: EvidenceItem[];
+};
+
+export default function ProfileScreen() {
+  const { user, token, signOut } = useAuth();
+  const { language, setLanguage, calendar, setCalendar, t } = useI18n();
+  const [activeTab, setActiveTab] = useState<Tab>('profile');
+  const [editMode, setEditMode] = useState(false);
+  const [profile, setProfile] = useState({
+    full_name: user?.full_name ?? 'SafeRoute User',
+    email: user?.email ?? 'account@saferoute.app',
+    phone_number: '',
+  });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [settings, setSettings] = useState({
+    notifications: true,
+    locationSharing: true,
+    emergencyAlerts: true,
+    safetyReminders: false,
+  });
+  const [stats, setStats] = useState({ trips: 0, safeMiles: 0, alerts: 0, sosUsed: 0 });
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [alertsWithEvidence, setAlertsWithEvidence] = useState<AlertWithEvidence[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [expandedAlert, setExpandedAlert] = useState<string | null>(null);
+
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [loadingEvidenceId, setLoadingEvidenceId] = useState<string | null>(null);
+  const [soundObject, setSoundObject] = useState<Audio.Sound | null>(null);
+  const [viewingPhotoUrl, setViewingPhotoUrl] = useState<string | null>(null);
+
+  // Password gate state
+  const [evidenceUnlocked, setEvidenceUnlocked] = useState(false);
+  const [passwordGateVisible, setPasswordGateVisible] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordVerifying, setPasswordVerifying] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Fetch a short-lived signed URL from the backend (bucket is private, public URLs return 400)
+  const getSignedUrl = async (filePath: string): Promise<string> => {
+    if (filePath.startsWith('http')) return filePath;
+    const data = await authedApiFetch(
+      `/api/sos/evidence/signed-url?file_path=${encodeURIComponent(filePath)}`,
+      token!
+    );
+    if (!data?.signed_url) throw new Error('Could not obtain a signed URL for this file');
+    return data.signed_url as string;
+  };
+
+  const handlePlayAudio = async (item: EvidenceItem) => {
+    try {
+      // Stop currently playing audio if the same item is tapped again
+      if (playingAudioId === item.evidence_id) {
+        if (soundObject) {
+          await soundObject.stopAsync();
+          await soundObject.unloadAsync();
+        }
+        setPlayingAudioId(null);
+        setSoundObject(null);
+        return;
+      }
+
+      if (soundObject) {
+        await soundObject.unloadAsync();
+        setSoundObject(null);
+      }
+
+      setLoadingEvidenceId(item.evidence_id);
+
+      // Get a signed URL so the private bucket file can be streamed
+      const url = await getSignedUrl(item.file_path);
+      console.log("[ProfileScreen] Playing audio from signed URL");
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+      });
+
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: url },
+        { shouldPlay: true }
+      );
+
+      setLoadingEvidenceId(null);
+      setPlayingAudioId(item.evidence_id);
+      setSoundObject(sound);
+
+      sound.setOnPlaybackStatusUpdate(async (status) => {
+        if (status.isLoaded && status.didJustFinish) {
+          await sound.unloadAsync();
+          setPlayingAudioId(null);
+          setSoundObject(null);
+        }
+      });
+    } catch (err) {
+      console.error("Failed to play audio:", err);
+      alert(`Unable to play audio: ${(err as any)?.message ?? 'Unknown error'}`);
+      setLoadingEvidenceId(null);
+      setPlayingAudioId(null);
+      setSoundObject(null);
+    }
+  };
+
+  const handleViewPhoto = async (item: EvidenceItem) => {
+    try {
+      setLoadingEvidenceId(item.evidence_id);
+      const url = await getSignedUrl(item.file_path);
+      setLoadingEvidenceId(null);
+      setViewingPhotoUrl(url);
+    } catch (err) {
+      console.error("Failed to load photo:", err);
+      alert(`Unable to load photo: ${(err as any)?.message ?? 'Unknown error'}`);
+      setLoadingEvidenceId(null);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (soundObject) {
+        soundObject.unloadAsync().catch(() => {});
+      }
+    };
+  }, [soundObject]);
+
+  useEffect(() => {
+    if (!token) return;
+    authedApiFetch('/api/profile', token)
+      .then((data) => {
+        if (data) setProfile({ full_name: data.full_name ?? '', email: data.email ?? '', phone_number: data.phone_number ?? '' });
+      })
+      .catch((e: any) => setProfileError(e?.message || 'Unable to load profile'));
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    Promise.all([authedApiFetch('/api/routes', token), authedApiFetch('/api/sos/history', token)])
+      .then(([routes, alerts]) => {
+        const routeList = Array.isArray(routes) ? routes : [];
+        const alertList = Array.isArray(alerts) ? alerts : [];
+        setStats({
+          trips: routeList.length,
+          safeMiles: Math.round(routeList.reduce((acc, r) => acc + (Number(r.distance) || 0), 0)),
+          alerts: alertList.length,
+          sosUsed: alertList.filter((a: any) => a.type === 'SOS').length,
+        });
+      })
+      .catch((e: any) => setStatsError(e?.message || 'Unable to load stats'));
+  }, [token]);
+
+  useEffect(() => {
+    if (!token || activeTab !== 'evidence') return;
+    setEvidenceLoading(true);
+    authedApiFetch('/api/sos/history', token)
+      .then(async (alerts) => {
+        const alertList = Array.isArray(alerts) ? alerts : [];
+        const withEvidence = await Promise.all(
+          alertList.map(async (alert: any) => {
+            try {
+              const ev = await authedApiFetch(`/api/sos/evidence/${alert.alert_id}`, token);
+              return { ...alert, evidence: Array.isArray(ev) ? ev : [] };
+            } catch {
+              return { ...alert, evidence: [] };
+            }
+          })
+        );
+        setAlertsWithEvidence(withEvidence);
+      })
+      .catch(() => setAlertsWithEvidence([]))
+      .finally(() => setEvidenceLoading(false));
+  }, [token, activeTab]);
+
+  const initials = useMemo(() => {
+    const base = profile.full_name || user?.full_name || 'SR';
+    return base.split(' ').filter(Boolean).map((n) => n[0]).join('').slice(0, 2).toUpperCase();
+  }, [profile.full_name, user?.full_name]);
+
+  const onSaveProfile = async () => {
+    if (!token) return;
+    setProfileSaving(true);
+    setProfileError(null);
+    try {
+      const updated = await authedApiFetch('/api/profile', token, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name: profile.full_name.trim(), email: profile.email.trim(), phone_number: profile.phone_number.trim() }),
+      });
+      setProfile({ full_name: updated.full_name ?? profile.full_name, email: updated.email ?? profile.email, phone_number: updated.phone_number ?? profile.phone_number });
+      setEditMode(false);
+    } catch (e: any) {
+      setProfileError(e?.message || 'Unable to update profile');
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const formatDate = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch { return iso; }
+  };
+
+  const audioCount = (items: EvidenceItem[]) => items.filter((i) => i.type === 'Audio').length;
+  const photoCount = (items: EvidenceItem[]) => items.filter((i) => i.type === 'Photo').length;
+
+  return (
+    <ScrollView contentContainerStyle={styles.container}>
+      {/* Tabs */}
+      <View style={styles.tabBar}>
+        <Pressable
+          style={[styles.tab, activeTab === 'profile' && styles.tabActive]}
+          onPress={() => {
+            setActiveTab('profile');
+            // Re-lock evidence when leaving the tab
+            setEvidenceUnlocked(false);
+          }}
+        >
+          <Text style={[styles.tabText, activeTab === 'profile' && styles.tabTextActive]}>Profile</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.tab, activeTab === 'evidence' && styles.tabActive]}
+          onPress={() => {
+            if (evidenceUnlocked) {
+              setActiveTab('evidence');
+            } else {
+              // Show password gate first
+              setPasswordInput('');
+              setPasswordError(null);
+              setShowPassword(false);
+              setPasswordGateVisible(true);
+            }
+          }}
+        >
+          <View style={styles.tabRow}>
+            <Text style={[styles.tabText, activeTab === 'evidence' && styles.tabTextActive]}>Alert Evidence</Text>
+            {!evidenceUnlocked && <MaterialIcons name="lock" size={13} color={activeTab === 'evidence' ? '#FFFFFF' : '#94A3B8'} />}
+            {stats.sosUsed > 0 && (
+              <View style={styles.badge}><Text style={styles.badgeText}>{stats.sosUsed}</Text></View>
+            )}
+          </View>
+        </Pressable>
+      </View>
+
+      {activeTab === 'profile' ? (
+        <>
+          {/* Profile Header */}
+          <View style={styles.profileCard}>
+            <View style={styles.avatar}><Text style={styles.avatarText}>{initials}</Text></View>
+            <Text style={styles.name}>{profile.full_name || user?.full_name || 'SafeRoute User'}</Text>
+            <Text style={styles.email}>{profile.email || user?.email || 'account@saferoute.app'}</Text>
+            <Pressable style={styles.outlineButton} onPress={() => setEditMode((v) => !v)}>
+              <Text style={styles.outlineButtonText}>{editMode ? 'Close Edit' : 'Edit Profile'}</Text>
+            </Pressable>
+            {profileError ? <Text style={styles.errorText}>{profileError}</Text> : null}
+          </View>
+
+          {/* Personal Info */}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Personal Information</Text>
+            {editMode ? (
+              <View style={styles.formBlock}>
+                {[
+                  { icon: 'person', key: 'full_name', placeholder: 'Full name', type: 'default' },
+                  { icon: 'mail', key: 'email', placeholder: 'Email', type: 'email-address' },
+                  { icon: 'call', key: 'phone_number', placeholder: 'Phone (+251...)', type: 'phone-pad' },
+                ].map(({ icon, key, placeholder, type }) => (
+                  <View key={key} style={styles.inputRow}>
+                    <MaterialIcons name={icon as any} size={18} color="#94A3B8" />
+                    <TextInput
+                      style={styles.input}
+                      placeholder={placeholder}
+                      keyboardType={type as any}
+                      autoCapitalize="none"
+                      value={(profile as any)[key]}
+                      onChangeText={(v) => setProfile((prev) => ({ ...prev, [key]: v }))}
+                    />
+                  </View>
+                ))}
+                <Pressable style={[styles.primaryButton, profileSaving && styles.buttonDisabled]} onPress={onSaveProfile} disabled={profileSaving}>
+                  <Text style={styles.primaryButtonText}>{profileSaving ? 'Saving...' : 'Save Profile'}</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <>
+                {[
+                  { icon: 'person', value: profile.full_name || user?.full_name || 'SafeRoute User' },
+                  { icon: 'mail', value: profile.email || user?.email || 'account@saferoute.app' },
+                  { icon: 'call', value: profile.phone_number || '—' },
+                  { icon: 'place', value: 'Addis Ababa, AA' },
+                ].map(({ icon, value }) => (
+                  <View key={icon} style={styles.infoRow}>
+                    <MaterialIcons name={icon as any} size={18} color="#94A3B8" />
+                    <Text style={styles.infoText}>{value}</Text>
+                  </View>
+                ))}
+              </>
+            )}
+          </View>
+
+          {/* Safety Settings */}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Safety Settings</Text>
+            {[
+              { icon: 'notifications', color: '#7C3AED', title: 'Push Notifications', sub: 'Receive safety alerts', key: 'notifications' },
+              { icon: 'map', color: '#16A34A', title: 'Location Services', sub: 'Share your location', key: 'locationSharing' },
+              { icon: 'security', color: '#DC2626', title: 'Emergency Alerts', sub: 'Critical safety warnings', key: 'emergencyAlerts' },
+              { icon: 'lightbulb', color: '#F97316', title: 'Safety Reminders', sub: 'Periodic safety tips', key: 'safetyReminders' },
+            ].map(({ icon, color, title, sub, key }) => (
+              <View key={key} style={styles.settingRow}>
+                <View style={styles.settingLeft}>
+                  <MaterialIcons name={icon as any} size={20} color={color} />
+                  <View><Text style={styles.settingTitle}>{title}</Text><Text style={styles.settingSub}>{sub}</Text></View>
+                </View>
+                <Switch value={(settings as any)[key]} onValueChange={(v) => setSettings((prev) => ({ ...prev, [key]: v }))} />
+              </View>
+            ))}
+          </View>
+
+          {/* Localization */}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Localization Preferences</Text>
+            <View style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <MaterialIcons name="language" size={20} color="#0D9488" />
+                <View><Text style={styles.settingTitle}>Language / ቋንቋ</Text><Text style={styles.settingSub}>{language === 'en' ? 'English' : 'አማርኛ'}</Text></View>
+              </View>
+              <Switch value={language === 'am'} onValueChange={(val) => setLanguage(val ? 'am' : 'en')} />
+            </View>
+            <View style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <MaterialIcons name="event" size={20} color="#0D9488" />
+                <View><Text style={styles.settingTitle}>Calendar</Text><Text style={styles.settingSub}>{calendar === 'gregorian' ? 'Gregorian (GC)' : 'Ethiopian (EC)'}</Text></View>
+              </View>
+              <Switch value={calendar === 'ethiopian'} onValueChange={(val) => setCalendar(val ? 'ethiopian' : 'gregorian')} />
+            </View>
+          </View>
+
+          {/* Stats */}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Your Safety Stats</Text>
+            <View style={styles.statsGrid}>
+              {[
+                { label: 'Trips Tracked', value: stats.trips, color: '#7C3AED' },
+                { label: 'Safe Miles', value: stats.safeMiles, color: '#16A34A' },
+                { label: 'Alerts', value: stats.alerts, color: '#7C3AED' },
+                { label: 'SOS Used', value: stats.sosUsed, color: '#DC2626' },
+              ].map(({ label, value, color }) => (
+                <View key={label} style={styles.stat}>
+                  <Text style={[styles.statValue, { color }]}>{value}</Text>
+                  <Text style={styles.statLabel}>{label}</Text>
+                </View>
+              ))}
+            </View>
+            {statsError ? <Text style={styles.errorText}>{statsError}</Text> : null}
+          </View>
+
+          {/* Account */}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Account</Text>
+            <Pressable style={styles.outlineButtonRow}>
+              <MaterialIcons name="lock" size={16} color="#0F172A" />
+              <Text style={styles.outlineButtonRowText}>Change Password</Text>
+            </Pressable>
+            <Pressable style={styles.logoutButton} onPress={signOut}>
+              <MaterialIcons name="logout" size={16} color="#DC2626" />
+              <Text style={styles.logoutText}>Sign Out</Text>
+            </Pressable>
+          </View>
+        </>
+      ) : (
+        <>
+          {/* Evidence Tab */}
+          <View style={styles.evidenceHeader}>
+            <Text style={styles.evidenceTitle}>Previous Alert Evidence</Text>
+            <Text style={styles.evidenceSub}>Audio and photo evidence from your emergency alerts</Text>
+          </View>
+
+          {evidenceLoading ? (
+            <View style={styles.emptyCard}>
+              <MaterialIcons name="hourglass-empty" size={40} color="#94A3B8" />
+              <Text style={styles.emptyText}>Loading evidence...</Text>
+            </View>
+          ) : alertsWithEvidence.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <MaterialIcons name="shield" size={48} color="#CBD5E1" />
+              <Text style={styles.emptyTitle}>No Evidence Recorded</Text>
+              <Text style={styles.emptyText}>Evidence will be automatically recorded when you trigger an SOS alert.</Text>
+            </View>
+          ) : (
+            alertsWithEvidence.map((alert) => (
+              <View key={alert.alert_id} style={styles.evidenceCard}>
+                {/* Alert Header */}
+                <Pressable style={styles.evidenceCardHeader} onPress={() => setExpandedAlert(expandedAlert === alert.alert_id ? null : alert.alert_id)}>
+                  <View style={styles.evidenceAlertLeft}>
+                    <View style={styles.sosIconWrap}>
+                      <MaterialIcons name="warning" size={18} color="#DC2626" />
+                    </View>
+                    <View>
+                      <Text style={styles.evidenceAlertType}>{alert.type} Alert</Text>
+                      <Text style={styles.evidenceAlertMeta}>{formatDate(alert.created_at)}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.evidenceRightRow}>
+                    <View style={[styles.statusPill, alert.status === 'Resolved' ? styles.statusResolved : styles.statusActive]}>
+                      <Text style={styles.statusText}>{alert.status}</Text>
+                    </View>
+                    <MaterialIcons name={expandedAlert === alert.alert_id ? 'expand-less' : 'expand-more'} size={20} color="#64748B" />
+                  </View>
+                </Pressable>
+
+                {/* Evidence counts summary */}
+                <View style={styles.evidenceSummaryRow}>
+                  <View style={styles.evidenceCountChip}>
+                    <MaterialIcons name="mic" size={14} color="#7C3AED" />
+                    <Text style={styles.evidenceCountText}>{audioCount(alert.evidence)} Audio</Text>
+                  </View>
+                  <View style={styles.evidenceCountChip}>
+                    <MaterialIcons name="photo-camera" size={14} color="#2563EB" />
+                    <Text style={styles.evidenceCountText}>{photoCount(alert.evidence)} Photo</Text>
+                  </View>
+                </View>
+
+                {/* Expanded evidence list */}
+                {expandedAlert === alert.alert_id && (
+                  <View style={styles.evidenceList}>
+                    <View style={styles.divider} />
+                    {alert.evidence.length === 0 ? (
+                      <Text style={styles.noEvidenceText}>No evidence files captured for this alert.</Text>
+                    ) : (
+                      alert.evidence.map((item, idx) => (
+                        <View key={item.evidence_id} style={[styles.evidenceItemCard, item.type === 'Audio' ? styles.evidenceItemAudio : styles.evidenceItemPhoto]}>
+                          <View style={styles.evidenceItemHeader}>
+                            <MaterialIcons name={item.type === 'Audio' ? 'mic' : 'photo-camera'} size={18} color={item.type === 'Audio' ? '#7C3AED' : '#2563EB'} />
+                            <Text style={styles.evidenceItemLabel}>{item.type} {idx + 1}</Text>
+                          </View>
+                          <Pressable
+                            style={[styles.evidencePlayBtn, loadingEvidenceId === item.evidence_id && styles.buttonDisabled]}
+                            onPress={() => {
+                              if (loadingEvidenceId === item.evidence_id) return;
+                              if (item.type === 'Audio') handlePlayAudio(item);
+                              else handleViewPhoto(item);
+                            }}
+                          >
+                            {loadingEvidenceId === item.evidence_id ? (
+                              <ActivityIndicator size="small" color="#7C3AED" />
+                            ) : (
+                              <MaterialIcons
+                                name={item.type === 'Audio'
+                                  ? (playingAudioId === item.evidence_id ? 'stop' : 'play-arrow')
+                                  : 'image'
+                                }
+                                size={14}
+                                color="#475569"
+                              />
+                            )}
+                            <Text style={styles.evidencePlayText}>
+                              {loadingEvidenceId === item.evidence_id
+                                ? 'Loading...'
+                                : item.type === 'Audio'
+                                  ? (playingAudioId === item.evidence_id ? 'Stop' : 'Play')
+                                  : 'View'
+                              }
+                            </Text>
+                          </Pressable>
+                          <Text style={styles.evidenceTimestamp}>{new Date(item.timestamp).toLocaleTimeString()}</Text>
+                        </View>
+                      ))
+                    )}
+
+                    <View style={styles.evidenceActions}>
+                      <Pressable style={styles.evidenceActionBtn}>
+                        <MaterialIcons name="download" size={14} color="#475569" />
+                        <Text style={styles.evidenceActionText}>Download All</Text>
+                      </Pressable>
+                      <Pressable style={styles.evidenceActionBtn}>
+                        <MaterialIcons name="share" size={14} color="#475569" />
+                        <Text style={styles.evidenceActionText}>Share</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                )}
+              </View>
+            ))
+          )}
+
+          {/* Info card */}
+          <View style={styles.infoCard}>
+            <Text style={styles.infoCardTitle}>About Evidence Recording</Text>
+            {[
+              'Audio is recorded every 30 seconds during SOS',
+              'Photos are captured every 30 seconds',
+              'All evidence is securely stored on our servers',
+              'Evidence can be shared with authorities',
+            ].map((line) => (
+              <Text key={line} style={styles.infoCardLine}>• {line}</Text>
+            ))}
+          </View>
+        </>
+      )}
+
+      {/* Password Gate Modal */}
+      <Modal transparent visible={passwordGateVisible} animationType="fade" onRequestClose={() => setPasswordGateVisible(false)}>
+        <View style={styles.gateOverlay}>
+          <View style={styles.gateCard}>
+            {/* Icon */}
+            <View style={styles.gateLockIconWrap}>
+              <MaterialIcons name="lock" size={32} color="#7C3AED" />
+            </View>
+
+            <Text style={styles.gateTitle}>Evidence Protected</Text>
+            <Text style={styles.gateSub}>
+              Enter your account password to access your emergency evidence.
+            </Text>
+
+            {/* Password field */}
+            <View style={[styles.gateInputRow, passwordError ? styles.gateInputError : null]}>
+              <MaterialIcons name="lock-outline" size={18} color="#94A3B8" />
+              <TextInput
+                style={styles.gateInput}
+                placeholder="Password"
+                placeholderTextColor="#94A3B8"
+                secureTextEntry={!showPassword}
+                value={passwordInput}
+                onChangeText={(v) => { setPasswordInput(v); setPasswordError(null); }}
+                autoCapitalize="none"
+                returnKeyType="done"
+                onSubmitEditing={async () => {
+                  if (!passwordInput.trim() || passwordVerifying) return;
+                  setPasswordVerifying(true);
+                  setPasswordError(null);
+                  try {
+                    await authedApiFetch('/api/auth/verify-password', token!, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ password: passwordInput }),
+                    });
+                    setEvidenceUnlocked(true);
+                    setPasswordGateVisible(false);
+                    setActiveTab('evidence');
+                    setPasswordInput('');
+                  } catch (e: any) {
+                    setPasswordError(e?.message || 'Incorrect password');
+                  } finally {
+                    setPasswordVerifying(false);
+                  }
+                }}
+              />
+              <Pressable onPress={() => setShowPassword((v) => !v)}>
+                <MaterialIcons name={showPassword ? 'visibility-off' : 'visibility'} size={18} color="#94A3B8" />
+              </Pressable>
+            </View>
+
+            {passwordError ? (
+              <View style={styles.gateErrorRow}>
+                <MaterialIcons name="error-outline" size={14} color="#DC2626" />
+                <Text style={styles.gateErrorText}>{passwordError}</Text>
+              </View>
+            ) : null}
+
+            {/* Actions */}
+            <View style={styles.gateActions}>
+              <Pressable
+                style={styles.gateCancelBtn}
+                onPress={() => { setPasswordGateVisible(false); setPasswordInput(''); setPasswordError(null); }}
+              >
+                <Text style={styles.gateCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.gateUnlockBtn, (!passwordInput.trim() || passwordVerifying) && styles.buttonDisabled]}
+                onPress={async () => {
+                  if (!passwordInput.trim() || passwordVerifying) return;
+                  setPasswordVerifying(true);
+                  setPasswordError(null);
+                  try {
+                    await authedApiFetch('/api/auth/verify-password', token!, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ password: passwordInput }),
+                    });
+                    setEvidenceUnlocked(true);
+                    setPasswordGateVisible(false);
+                    setActiveTab('evidence');
+                    setPasswordInput('');
+                  } catch (e: any) {
+                    setPasswordError(e?.message || 'Incorrect password');
+                  } finally {
+                    setPasswordVerifying(false);
+                  }
+                }}
+                disabled={!passwordInput.trim() || passwordVerifying}
+              >
+                {passwordVerifying ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <MaterialIcons name="lock-open" size={16} color="#FFFFFF" />
+                )}
+                <Text style={styles.gateUnlockText}>
+                  {passwordVerifying ? 'Verifying...' : 'Unlock'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Photo Viewer Modal */}
+      <Modal transparent visible={!!viewingPhotoUrl} animationType="fade" onRequestClose={() => setViewingPhotoUrl(null)}>
+        <View style={styles.photoOverlay}>
+          <Pressable style={styles.photoCloseBackground} onPress={() => setViewingPhotoUrl(null)} />
+          <View style={styles.photoModalContent}>
+            {viewingPhotoUrl && (
+              <Image
+                source={{ uri: viewingPhotoUrl }}
+                style={styles.photoFullImage}
+                resizeMode="contain"
+              />
+            )}
+            <Pressable style={styles.photoCloseBtn} onPress={() => setViewingPhotoUrl(null)}>
+              <MaterialIcons name="close" size={24} color="#FFFFFF" />
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flexGrow: 1, padding: 16, paddingBottom: 40, gap: 16, backgroundColor: '#F8FAFC', maxWidth: 420, alignSelf: 'center', width: '100%' },
+  tabBar: { flexDirection: 'row', backgroundColor: '#FFFFFF', borderRadius: 14, padding: 4, borderWidth: 1, borderColor: '#E2E8F0' },
+  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 10 },
+  tabActive: { backgroundColor: '#7C3AED' },
+  tabText: { fontWeight: '600', color: '#64748B', fontSize: 13 },
+  tabTextActive: { color: '#FFFFFF' },
+  tabRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  badge: { backgroundColor: '#DC2626', borderRadius: 99, width: 18, height: 18, alignItems: 'center', justifyContent: 'center' },
+  badgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '700' },
+  profileCard: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 20, alignItems: 'center', gap: 10, borderWidth: 1, borderColor: '#E2E8F0' },
+  avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: '#C084FC', alignItems: 'center', justifyContent: 'center' },
+  avatarText: { color: '#FFFFFF', fontSize: 28, fontWeight: '700' },
+  name: { fontSize: 20, fontWeight: '700', color: '#0F172A' },
+  email: { color: '#64748B' },
+  outlineButton: { marginTop: 6, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 999, borderWidth: 1, borderColor: '#E2E8F0' },
+  outlineButtonText: { color: '#0F172A', fontWeight: '600' },
+  errorText: { color: '#DC2626', fontSize: 12 },
+  card: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 16, gap: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  cardTitle: { fontSize: 16, fontWeight: '600', color: '#0F172A' },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  infoText: { color: '#475569' },
+  formBlock: { gap: 12 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#F8FAFC' },
+  input: { flex: 1 },
+  primaryButton: { alignItems: 'center', paddingVertical: 12, borderRadius: 12, backgroundColor: '#7C3AED' },
+  primaryButtonText: { color: '#FFFFFF', fontWeight: '600' },
+  buttonDisabled: { opacity: 0.6 },
+  settingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  settingLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  settingTitle: { color: '#0F172A', fontWeight: '600' },
+  settingSub: { color: '#94A3B8', fontSize: 12 },
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  stat: { width: '47%', alignItems: 'center', paddingVertical: 12, borderRadius: 14, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0' },
+  statValue: { fontSize: 20, fontWeight: '700' },
+  statLabel: { fontSize: 12, color: '#64748B', marginTop: 4 },
+  outlineButtonRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  outlineButtonRowText: { color: '#0F172A', fontWeight: '600' },
+  logoutButton: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: '#FECACA', backgroundColor: '#FEF2F2' },
+  logoutText: { color: '#DC2626', fontWeight: '600' },
+  // Evidence tab
+  evidenceHeader: { gap: 4 },
+  evidenceTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
+  evidenceSub: { fontSize: 13, color: '#64748B' },
+  emptyCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 32, alignItems: 'center', gap: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
+  emptyText: { color: '#64748B', fontSize: 13, textAlign: 'center' },
+  evidenceCard: { backgroundColor: '#FFFFFF', borderRadius: 18, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' },
+  evidenceCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 },
+  evidenceAlertLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  sosIconWrap: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#FEF2F2', alignItems: 'center', justifyContent: 'center' },
+  evidenceAlertType: { fontWeight: '700', color: '#0F172A', fontSize: 14 },
+  evidenceAlertMeta: { color: '#64748B', fontSize: 12, marginTop: 2 },
+  evidenceRightRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  statusPill: { borderRadius: 99, paddingHorizontal: 10, paddingVertical: 3 },
+  statusResolved: { backgroundColor: '#DCFCE7' },
+  statusActive: { backgroundColor: '#FEF2F2' },
+  statusText: { fontSize: 11, fontWeight: '600', color: '#0F172A' },
+  evidenceSummaryRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingBottom: 12 },
+  evidenceCountChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F8FAFC', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: '#E2E8F0' },
+  evidenceCountText: { fontSize: 12, color: '#475569', fontWeight: '500' },
+  divider: { height: 1, backgroundColor: '#E2E8F0', marginBottom: 12 },
+  evidenceList: { paddingHorizontal: 14, paddingBottom: 14, gap: 8 },
+  noEvidenceText: { color: '#94A3B8', fontSize: 13, textAlign: 'center', paddingVertical: 12 },
+  evidenceItemCard: { borderRadius: 12, padding: 12, gap: 6, borderWidth: 1 },
+  evidenceItemAudio: { backgroundColor: '#FAF5FF', borderColor: '#E9D5FF' },
+  evidenceItemPhoto: { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' },
+  evidenceItemHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  evidenceItemLabel: { fontWeight: '600', color: '#0F172A', fontSize: 13 },
+  evidencePlayBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FFFFFF', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: '#E2E8F0', alignSelf: 'flex-start' },
+  evidencePlayText: { fontSize: 12, color: '#475569', fontWeight: '500' },
+  evidenceTimestamp: { fontSize: 11, color: '#94A3B8' },
+  evidenceActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  evidenceActionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
+  evidenceActionText: { fontSize: 13, color: '#475569', fontWeight: '500' },
+  infoCard: { backgroundColor: '#EFF6FF', borderRadius: 14, padding: 14, gap: 6, borderWidth: 1, borderColor: '#BFDBFE' },
+  infoCardTitle: { fontWeight: '700', color: '#1E3A5F', fontSize: 14 },
+  infoCardLine: { fontSize: 13, color: '#1E40AF' },
+  // Photo Viewer Modal
+  photoOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.9)', justifyContent: 'center', alignItems: 'center' },
+  photoCloseBackground: { ...StyleSheet.absoluteFillObject },
+  photoModalContent: { width: '90%', height: '80%', justifyContent: 'center', alignItems: 'center' },
+  photoFullImage: { width: '100%', height: '100%' },
+  photoCloseBtn: { position: 'absolute', top: -40, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8 },
+  // Password Gate Modal styles
+  gateOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  gateCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, alignItems: 'center', gap: 14, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 20, elevation: 10 },
+  gateLockIconWrap: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#F5F3FF', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#DDD6FE' },
+  gateTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
+  gateSub: { fontSize: 13, color: '#64748B', textAlign: 'center', lineHeight: 19 },
+  gateInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#F8FAFC', width: '100%' },
+  gateInputError: { borderColor: '#FCA5A5', backgroundColor: '#FFF5F5' },
+  gateInput: { flex: 1, fontSize: 15, color: '#0F172A' },
+  gateErrorRow: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start' },
+  gateErrorText: { color: '#DC2626', fontSize: 12, fontWeight: '500' },
+  gateActions: { flexDirection: 'row', gap: 10, width: '100%', marginTop: 4 },
+  gateCancelBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center' },
+  gateCancelText: { color: '#475569', fontWeight: '600' },
+  gateUnlockBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderRadius: 12, backgroundColor: '#7C3AED' },
+  gateUnlockText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+});

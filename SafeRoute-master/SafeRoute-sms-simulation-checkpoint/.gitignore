@@ -1,0 +1,40 @@
+# Dependencies
+**/node_modules/
+
+# Expo
+.expo/
+.expo-shared/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Build outputs
+**/dist/
+**/build/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Generated / temp
+figma-zip/
+docx_tmp/
+# Local PDF text extraction
+_pdf_extract.txt
+# NPM cache
+backend/.npm-cache/
+# Archives
+docx_tmp.zip
+
+# Android local machine config
+frontend/android/local.properties
