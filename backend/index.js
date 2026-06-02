@@ -331,6 +331,16 @@ function buildEmergencySms({ alertType, user, latitude, longitude, liveLocationU
     .join(" ");
 }
 
+function buildUnsafeCheckInSms({ user, durationSeconds }) {
+  const name = user?.full_name || "A SafeRoute user";
+  const minutes = Math.max(1, Math.ceil(Number(durationSeconds || 60) / 60));
+  return [
+    `SafeRoute check-in from ${name}.`,
+    `They feel unsafe and started a ${minutes}-minute safety timer.`,
+    "If they do not confirm they are safe, this will escalate to SOS.",
+  ].join(" ");
+}
+
 async function notifyContacts(contacts, messageBody) {
   const smsResults = [];
 
@@ -886,7 +896,7 @@ app.delete("/api/emergency-contacts/:id", requireAuth, async (req, res) => {
 // Medium alert: start countdown window
 app.post("/api/medium/start", requireAuth, async (req, res) => {
   const { user_id } = req.user;
-  const { duration_seconds } = req.body || {};
+  const { duration_seconds, notify_contact_ids } = req.body || {};
   const duration = clamp(Number(duration_seconds || 60), 15, 300);
 
   const { data: alert, error } = await supabase
@@ -908,6 +918,23 @@ app.post("/api/medium/start", requireAuth, async (req, res) => {
 
   const started_at = new Date(alert.timestamp || new Date().toISOString());
   const expires_at = new Date(started_at.getTime() + duration * 1000).toISOString();
+  const selectedContactIds = Array.isArray(notify_contact_ids)
+    ? notify_contact_ids.map(String)
+    : [];
+  let notifiedContacts = [];
+  let smsResults = [];
+
+  if (selectedContactIds.length > 0) {
+    const contacts = await fetchUserContacts(user_id);
+    const user = await fetchUserProfile(user_id);
+    notifiedContacts = contacts.filter((contact) =>
+      selectedContactIds.includes(String(contact.contact_id))
+    );
+    smsResults = await notifyContacts(
+      notifiedContacts,
+      buildUnsafeCheckInSms({ user, durationSeconds: duration })
+    );
+  }
 
   res.status(201).json({
     alert_id: alert.alert_id,
@@ -915,6 +942,8 @@ app.post("/api/medium/start", requireAuth, async (req, res) => {
     started_at: alert.timestamp,
     expires_at,
     duration_seconds: duration,
+    notified_contacts: notifiedContacts,
+    sms: smsResults,
   });
 });
 

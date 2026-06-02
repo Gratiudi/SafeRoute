@@ -10,6 +10,13 @@ import * as Location from 'expo-location';
 import { Audio } from 'expo-av';
 import { Camera, CameraView } from 'expo-camera';
 
+type EmergencyContact = {
+  contact_id: string;
+  name: string;
+  phone_number: string;
+  relationship: string | null;
+};
+
 export default function HomeScreen() {
   const { user, token } = useAuth();
   const { t, formatTimestamp } = useI18n();
@@ -27,6 +34,9 @@ export default function HomeScreen() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [smsWarning, setSmsWarning] = useState<string | null>(null);
   const [mediumDuration, setMediumDuration] = useState(60);
+  const [mediumContacts, setMediumContacts] = useState<EmergencyContact[]>([]);
+  const [selectedMediumContactIds, setSelectedMediumContactIds] = useState<string[]>([]);
+  const [mediumContactsLoading, setMediumContactsLoading] = useState(false);
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [sosCountdown, setSosCountdown] = useState<number | null>(null);
@@ -104,7 +114,21 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!token) return;
     void fetchAlertHistory();
+    void fetchEmergencyContacts();
   }, [token]);
+
+  const fetchEmergencyContacts = async () => {
+    if (!token || mediumContactsLoading) return;
+    setMediumContactsLoading(true);
+    try {
+      const data = await authedApiFetch('/api/emergency-contacts', token);
+      setMediumContacts(Array.isArray(data) ? data : []);
+    } catch {
+      setMediumContacts([]);
+    } finally {
+      setMediumContactsLoading(false);
+    }
+  };
 
   // Active SOS timer
   useEffect(() => {
@@ -295,8 +319,15 @@ export default function HomeScreen() {
       const result = await authedApiFetch('/api/medium/start', token, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ duration_seconds: mediumDuration }),
+        body: JSON.stringify({
+          duration_seconds: mediumDuration,
+          notify_contact_ids: selectedMediumContactIds,
+        }),
       });
+      const sms = Array.isArray(result?.sms) ? result.sms : [];
+      if (selectedMediumContactIds.length > 0 && !sms.length) {
+        setSmsWarning('Timer started, but selected contacts were not notified. Check SMS provider settings.');
+      }
       setMediumAlertId(result.alert_id);
       setMediumExpiresAt(result.expires_at);
       showStatus('Check-in timer started.');
@@ -319,6 +350,7 @@ export default function HomeScreen() {
         body: JSON.stringify({ alert_id: mediumAlertId }),
       });
       resetMediumState();
+      setSelectedMediumContactIds([]);
       showStatus('Marked safe.');
       void fetchAlertHistory();
       setMediumOpen(false);
@@ -356,6 +388,7 @@ export default function HomeScreen() {
       }
 
       resetMediumState();
+      setSelectedMediumContactIds([]);
       showStatus('Escalated to SOS.');
       void fetchAlertHistory();
       setMediumOpen(false);
@@ -401,6 +434,14 @@ export default function HomeScreen() {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  const toggleMediumContact = (contactId: string) => {
+    setSelectedMediumContactIds((prev) =>
+      prev.includes(contactId)
+        ? prev.filter((id) => id !== contactId)
+        : [...prev, contactId]
+    );
   };
 
   return (
@@ -530,6 +571,47 @@ export default function HomeScreen() {
                     <Text style={styles.durationButtonText}>+15s</Text>
                   </Pressable>
                 </View>
+              </View>
+            ) : null}
+            {!mediumActive ? (
+              <View style={styles.contactSelectBlock}>
+                <View style={styles.contactSelectHeader}>
+                  <Text style={styles.durationLabel}>Notify a contact now</Text>
+                  <Pressable onPress={fetchEmergencyContacts} disabled={mediumContactsLoading}>
+                    <Text style={styles.historyRefresh}>{mediumContactsLoading ? 'Loading...' : 'Refresh'}</Text>
+                  </Pressable>
+                </View>
+                {mediumContacts.length === 0 ? (
+                  <Text style={styles.contactSelectHint}>No contacts found. Add one from Emergency Contacts.</Text>
+                ) : (
+                  <View style={styles.contactSelectList}>
+                    {mediumContacts.map((contact) => {
+                      const selected = selectedMediumContactIds.includes(contact.contact_id);
+                      return (
+                        <Pressable
+                          key={contact.contact_id}
+                          style={[styles.contactChoice, selected && styles.contactChoiceSelected]}
+                          onPress={() => toggleMediumContact(contact.contact_id)}
+                        >
+                          <MaterialIcons
+                            name={selected ? 'check-circle' : 'radio-button-unchecked'}
+                            size={18}
+                            color={selected ? '#16A34A' : '#94A3B8'}
+                          />
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.contactChoiceName}>{contact.name}</Text>
+                            <Text style={styles.contactChoiceMeta}>
+                              {contact.relationship ? `${contact.relationship} • ` : ''}{contact.phone_number}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
+                <Text style={styles.contactSelectHint}>
+                  Selected contacts get a check-in SMS now. If this escalates, all emergency contacts get the SOS alert.
+                </Text>
               </View>
             ) : null}
             {mediumActive ? (
