@@ -70,9 +70,9 @@ export default function ContactsScreen() {
       return;
     }
 
-    const phoneRegex = /^\+[1-9]\d{1,14}$/;
+    const phoneRegex = /^\+2519\d{8}$/;
     if (!phoneRegex.test(phone.trim())) {
-      Alert.alert("Invalid phone", "Must be E.164 format (e.g., +251...)");
+      Alert.alert("Invalid phone", "Must start with +2519 and include 8 more digits (e.g., +251912345678).");
       return;
     }
 
@@ -233,16 +233,6 @@ export default function ContactsScreen() {
             <View style={styles.contactLine}>
               <MaterialIcons name="call" size={16} color="#94A3B8" />
               <Text style={styles.contactMeta}>{item.phone_number}</Text>
-            </View>
-            <View style={styles.contactActions}>
-              <Pressable style={styles.actionPill}>
-                <MaterialIcons name="call" size={14} color="#FFFFFF" />
-                <Text style={styles.actionPillText}>Call</Text>
-              </Pressable>
-              <Pressable style={styles.actionPillOutline}>
-                <MaterialIcons name="message" size={14} color="#7C3AED" />
-                <Text style={styles.actionPillOutlineText}>Message</Text>
-              </Pressable>
             </View>
           </View>
         </View>

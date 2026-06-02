@@ -5,6 +5,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const fetch = require("node-fetch");
 const crypto = require("crypto");
+const os = require("os");
 const { supabase } = require("./supabaseClient");
 
 const app = express();
@@ -348,9 +349,39 @@ function mapsLink(latitude, longitude) {
 }
 
 function getPublicBaseUrl(req) {
-  return (
-    process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`
-  ).replace(/\/$/, "");
+  const explicitBaseUrl =
+    process.env.LOCATION_SHARE_BASE_URL || process.env.PUBLIC_BASE_URL;
+  if (explicitBaseUrl) {
+    return explicitBaseUrl.replace(/\/$/, "");
+  }
+
+  const host = (req.get("host") || "").trim();
+  const protocol = req.protocol || "http";
+
+  if (host && !/^0\.0\.0\.0(?::\d+)?$/.test(host) && !/^null(?::\d+)?$/i.test(host)) {
+    return `${protocol}://${host}`.replace(/\/$/, "");
+  }
+
+  const nets = os.networkInterfaces();
+  let lanIp = null;
+  for (const entries of Object.values(nets)) {
+    for (const entry of entries || []) {
+      if (entry && entry.family === "IPv4" && !entry.internal) {
+        lanIp = entry.address;
+        break;
+      }
+    }
+    if (lanIp) break;
+  }
+
+  const hostPort = host.includes(":")
+    ? host.split(":").slice(1).join(":")
+    : String(port);
+  if (lanIp) {
+    return `${protocol}://${lanIp}:${hostPort}`.replace(/\/$/, "");
+  }
+
+  return `${protocol}://localhost:${hostPort}`.replace(/\/$/, "");
 }
 
 function buildShareUrl(req, shareCode) {
@@ -624,12 +655,12 @@ app.post("/api/auth/send-otp", async (req, res) => {
     return res.status(400).json({ error: "phone_number is required" });
   }
   const cleanPhone = phone_number.trim();
-  const phoneRegex = /^\+[1-9]\d{1,14}$/;
+  const phoneRegex = /^\+2519\d{8}$/;
   if (!phoneRegex.test(cleanPhone)) {
     return res
       .status(400)
       .json({
-        error: "Invalid phone number format. Must be E.164 (e.g., +251...)",
+        error: "Invalid phone number format. Must start with +2519 and include 8 more digits (e.g., +251912345678).",
       });
   }
 
@@ -978,12 +1009,12 @@ app.put("/api/emergency-contacts/:id", requireAuth, async (req, res) => {
   if (name) updates.name = name;
   if (phone_number) {
     const cleanPhone = phone_number.trim();
-    const phoneRegex = /^\+[1-9]\d{1,14}$/;
+    const phoneRegex = /^\+2519\d{8}$/;
     if (!phoneRegex.test(cleanPhone)) {
       return res
         .status(400)
         .json({
-          error: "Invalid phone number format. Must be E.164 (e.g., +251...)",
+          error: "Invalid phone number format. Must start with +2519 and include 8 more digits (e.g., +251912345678).",
         });
     }
     updates.phone_number = cleanPhone;

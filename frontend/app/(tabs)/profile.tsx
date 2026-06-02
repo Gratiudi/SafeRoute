@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, Tex
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useAuth } from '@/lib/auth';
 import { authedApiFetch } from '@/lib/api';
-import { useI18n, Language, CalendarType } from '@/lib/i18n';
+import { useI18n } from '@/lib/i18n';
 import { Audio } from 'expo-av';
 
 type Tab = 'profile' | 'evidence';
@@ -26,7 +26,7 @@ type AlertWithEvidence = {
 
 export default function ProfileScreen() {
   const { user, token, signOut } = useAuth();
-  const { language, setLanguage, calendar, setCalendar, t } = useI18n();
+  const { language, setLanguage, calendar, setCalendar } = useI18n();
   const [activeTab, setActiveTab] = useState<Tab>('profile');
   const [editMode, setEditMode] = useState(false);
   const [profile, setProfile] = useState({
