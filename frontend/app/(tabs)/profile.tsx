@@ -467,7 +467,7 @@ export default function ProfileScreen() {
                     </View>
                     <View>
                       <Text style={styles.evidenceAlertType}>{alert.type} Alert</Text>
-                      <Text style={styles.evidenceAlertMeta}>{formatDate(alert.timestamp ?? (alert as any).created_at)}</Text>
+                      <Text style={styles.evidenceAlertMeta}>{formatDate(alert.timestamp || (alert as any).created_at)}</Text>
                     </View>
                   </View>
                   <View style={styles.evidenceRightRow}>
