@@ -3,7 +3,6 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Link, useRouter } from 'expo-router';
 import { useAuth } from '@/lib/auth';
-import { apiFetch } from '@/lib/api';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -14,9 +13,6 @@ export default function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const [step, setStep] = useState<'details' | 'otp'>('details');
-  const [otp, setOtp] = useState('');
-
   useEffect(() => {
     if (token) router.replace('/(tabs)');
   }, [token, router]);
@@ -25,34 +21,6 @@ export default function LoginScreen() {
     setError(null);
     setSubmitting(true);
     try {
-      if (email.trim().startsWith('+')) {
-        await apiFetch('/api/auth/send-otp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone_number: email.trim() }),
-        });
-        setStep('otp');
-      } else {
-        await signIn(email.trim(), password);
-        router.replace('/(tabs)');
-      }
-    } catch (e: any) {
-      setError(e?.message ?? 'Login failed');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const onVerifyOtpAndLogin = async () => {
-    setError(null);
-    setSubmitting(true);
-    try {
-      await apiFetch('/api/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone_number: email.trim(), otp: otp.trim() }),
-      });
-
       await signIn(email.trim(), password);
       router.replace('/(tabs)');
     } catch (e: any) {
@@ -86,60 +54,37 @@ export default function LoginScreen() {
       </View>
 
       <View style={styles.form}>
-        {step === 'details' ? (
-          <>
-            <View style={styles.field}>
-              <Text style={styles.label}>Email Address or Phone (+...)</Text>
-              <TextInput
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                placeholder="email@example.com or +251..."
-                placeholderTextColor="#94A3B8"
-                style={[styles.input, { color: '#0F172A' }]}
-              />
-            </View>
+        <View style={styles.field}>
+          <Text style={styles.label}>Email Address or Phone (+...)</Text>
+          <TextInput
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            placeholder="email@example.com or +251..."
+            placeholderTextColor="#94A3B8"
+            style={[styles.input, { color: '#0F172A' }]}
+          />
+        </View>
 
-            <View style={styles.field}>
-              <View style={styles.passwordRow}>
-                <Text style={styles.label}>Password</Text>
-                <Pressable>
-                  <Text style={styles.forgotText}>Forgot?</Text>
-                </Pressable>
-              </View>
-              <TextInput value={password} onChangeText={setPassword} secureTextEntry placeholderTextColor="#94A3B8" style={[styles.input, { color: '#0F172A' }]} />
-            </View>
-
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-
-            <Pressable
-              style={[styles.primaryButton, submitting && styles.buttonDisabled]}
-              onPress={onSendOtp}
-              disabled={submitting}>
-              <Text style={styles.primaryButtonText}>{submitting ? 'Please wait...' : 'Login'}</Text>
+        <View style={styles.field}>
+          <View style={styles.passwordRow}>
+            <Text style={styles.label}>Password</Text>
+            <Pressable>
+              <Text style={styles.forgotText}>Forgot?</Text>
             </Pressable>
-          </>
-        ) : (
-          <>
-            <View style={styles.field}>
-              <Text style={styles.label}>Enter 6-digit OTP</Text>
-              <TextInput value={otp} onChangeText={setOtp} keyboardType="number-pad" maxLength={6} placeholderTextColor="#94A3B8" style={[styles.input, { color: '#0F172A' }]} />
-            </View>
+          </View>
+          <TextInput value={password} onChangeText={setPassword} secureTextEntry placeholderTextColor="#94A3B8" style={[styles.input, { color: '#0F172A' }]} />
+        </View>
 
-            {error ? <Text style={styles.error}>{error}</Text> : null}
+        {error ? <Text style={styles.error}>{error}</Text> : null}
 
-            <Pressable
-              style={[styles.primaryButton, submitting && styles.buttonDisabled]}
-              onPress={onVerifyOtpAndLogin}
-              disabled={submitting}>
-              <Text style={styles.primaryButtonText}>{submitting ? 'Verifying...' : 'Verify & Login'}</Text>
-            </Pressable>
-            <Pressable onPress={() => setStep('details')} style={{ marginTop: 10 }}>
-              <Text style={styles.footerText}>Back to details</Text>
-            </Pressable>
-          </>
-        )}
+        <Pressable
+          style={[styles.primaryButton, submitting && styles.buttonDisabled]}
+          onPress={onSendOtp}
+          disabled={submitting}>
+          <Text style={styles.primaryButtonText}>{submitting ? 'Please wait...' : 'Login'}</Text>
+        </Pressable>
       </View>
 
       <View style={styles.demoCard}>
