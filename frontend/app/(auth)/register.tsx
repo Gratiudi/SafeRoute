@@ -8,6 +8,37 @@ import * as Location from 'expo-location';
 import { Camera } from 'expo-camera';
 import { Audio } from 'expo-av';
 
+// Password strength validator
+const validatePasswordStrength = (pwd: string) => {
+  const checks = {
+    length: pwd.length >= 8,
+    hasUppercase: /[A-Z]/.test(pwd),
+    hasLowercase: /[a-z]/.test(pwd),
+    hasNumber: /\d/.test(pwd),
+    hasSpecialChar: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd),
+  };
+
+  const passedChecks = Object.values(checks).filter(Boolean).length;
+  let strength = 'weak';
+  let color = '#DC2626';
+
+  if (passedChecks >= 4) {
+    strength = 'strong';
+    color = '#16A34A';
+  } else if (passedChecks >= 3) {
+    strength = 'medium';
+    color = '#F59E0B';
+  }
+
+  return {
+    strength,
+    color,
+    checks,
+    passedChecks,
+    isValid: passedChecks >= 3, // Require at least 3 checks
+  };
+};
+
 export default function RegisterScreen() {
   const router = useRouter();
   const { signUp, token } = useAuth();
@@ -18,6 +49,7 @@ export default function RegisterScreen() {
   const [password, setPassword] = useState('test123');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [passwordStrength, setPasswordStrength] = useState(validatePasswordStrength(''));
 
   const [step, setStep] = useState<'details' | 'otp'>('details');
   const [otp, setOtp] = useState('');
@@ -26,8 +58,20 @@ export default function RegisterScreen() {
     if (token) router.replace('/(tabs)');
   }, [token, router]);
 
+  const handlePasswordChange = (pwd: string) => {
+    setPassword(pwd);
+    setPasswordStrength(validatePasswordStrength(pwd));
+  };
+
   const onSendOtp = async () => {
     setError(null);
+
+    // Check password strength
+    if (!passwordStrength.isValid) {
+      setError('Password must be at least 8 characters with uppercase, lowercase, number, or special character');
+      return;
+    }
+
     setSubmitting(true);
     try {
       if (phoneNumber.trim()) {
@@ -140,7 +184,79 @@ export default function RegisterScreen() {
 
             <View style={styles.field}>
               <Text style={styles.label}>Password</Text>
-              <TextInput value={password} onChangeText={setPassword} secureTextEntry placeholderTextColor="#94A3B8" style={[styles.input, { color: '#0F172A' }]} />
+              <TextInput 
+                value={password} 
+                onChangeText={handlePasswordChange} 
+                secureTextEntry 
+                placeholderTextColor="#94A3B8" 
+                style={[styles.input, { color: '#0F172A' }]} 
+              />
+              
+              {/* Password Strength Indicator */}
+              {password.length > 0 && (
+                <View style={styles.strengthContainer}>
+                  <View style={styles.strengthBar}>
+                    <View
+                      style={[
+                        styles.strengthFill,
+                        {
+                          width: `${(passwordStrength.passedChecks / 5) * 100}%`,
+                          backgroundColor: passwordStrength.color,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={[styles.strengthText, { color: passwordStrength.color }]}>
+                    Strength: {passwordStrength.strength}
+                  </Text>
+                </View>
+              )}
+
+              {/* Requirements Checklist */}
+              {password.length > 0 && (
+                <View style={styles.requirementsContainer}>
+                  <View style={styles.requirementRow}>
+                    <MaterialIcons
+                      name={passwordStrength.checks.length ? 'check-circle' : 'radio-button-unchecked'}
+                      size={16}
+                      color={passwordStrength.checks.length ? '#16A34A' : '#CBD5E1'}
+                    />
+                    <Text style={styles.requirementText}>At least 8 characters</Text>
+                  </View>
+                  <View style={styles.requirementRow}>
+                    <MaterialIcons
+                      name={passwordStrength.checks.hasUppercase ? 'check-circle' : 'radio-button-unchecked'}
+                      size={16}
+                      color={passwordStrength.checks.hasUppercase ? '#16A34A' : '#CBD5E1'}
+                    />
+                    <Text style={styles.requirementText}>Uppercase letter (A-Z)</Text>
+                  </View>
+                  <View style={styles.requirementRow}>
+                    <MaterialIcons
+                      name={passwordStrength.checks.hasLowercase ? 'check-circle' : 'radio-button-unchecked'}
+                      size={16}
+                      color={passwordStrength.checks.hasLowercase ? '#16A34A' : '#CBD5E1'}
+                    />
+                    <Text style={styles.requirementText}>Lowercase letter (a-z)</Text>
+                  </View>
+                  <View style={styles.requirementRow}>
+                    <MaterialIcons
+                      name={passwordStrength.checks.hasNumber ? 'check-circle' : 'radio-button-unchecked'}
+                      size={16}
+                      color={passwordStrength.checks.hasNumber ? '#16A34A' : '#CBD5E1'}
+                    />
+                    <Text style={styles.requirementText}>Number (0-9)</Text>
+                  </View>
+                  <View style={styles.requirementRow}>
+                    <MaterialIcons
+                      name={passwordStrength.checks.hasSpecialChar ? 'check-circle' : 'radio-button-unchecked'}
+                      size={16}
+                      color={passwordStrength.checks.hasSpecialChar ? '#16A34A' : '#CBD5E1'}
+                    />
+                    <Text style={styles.requirementText}>Special character (!@#$%^&* etc.)</Text>
+                  </View>
+                </View>
+              )}
             </View>
 
             {error ? <Text style={styles.error}>{error}</Text> : null}

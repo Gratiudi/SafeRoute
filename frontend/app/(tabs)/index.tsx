@@ -130,12 +130,18 @@ export default function HomeScreen() {
     }
   };
 
-  // Active SOS timer
+  // Active SOS timer and evidence capture cycle
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
     let initialPhotoTimeout: ReturnType<typeof setTimeout> | null = null;
 
     if (activeSosOpen) {
+      // Evidence capture cycle:
+      // - startEvidenceCapture() records 30-second audio snippets in a loop
+      // - captureAndUploadPhoto() captures photos at synchronized intervals
+      // Timeline: Photo at 1.5s (warmup), then every 30s (T=30s, 60s, 90s, etc.)
+      // Result: Photo → 30s Audio → Photo → 30s Audio → Photo (repeats until SOS ends)
+      
       // Warm up camera and capture initial photo after 1.5 seconds
       initialPhotoTimeout = setTimeout(() => {
         void captureAndUploadPhoto();
@@ -316,12 +322,16 @@ export default function HomeScreen() {
     setMediumLoading(true);
     setSmsWarning(null);
     try {
+      // Get user's current location
+      const locationPayload = await getEmergencyLocation();
+      
       const result = await authedApiFetch('/api/medium/start', token, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           duration_seconds: mediumDuration,
           notify_contact_ids: selectedMediumContactIds,
+          ...locationPayload,
         }),
       });
       const sms = Array.isArray(result?.sms) ? result.sms : [];

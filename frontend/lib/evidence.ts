@@ -71,39 +71,44 @@ export const startEvidenceCapture = (alertId: string, token: string) => {
   captureSessionId += 1;
   const sessionId = captureSessionId;
 
-  // Define a function to record and upload a snippet of audio
-  const recordAndUploadSnippet = async () => {
+  // Define a function to capture one cycle: photo + 30 seconds of audio + photo
+  const captureCycle = async () => {
     let recording: Audio.Recording | null = null;
     try {
       if (sessionId !== captureSessionId) return;
 
-      console.log("[EvidenceCapture] Starting audio snippet recording...");
+      console.log("[EvidenceCapture] Starting evidence capture cycle...");
       
-      // Request permission
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== "granted") {
+      // Step 1: Request permissions
+      const audioStatus = await Audio.requestPermissionsAsync();
+      if (audioStatus.status !== "granted") {
         console.warn("[EvidenceCapture] Microphone permission not granted.");
         return;
       }
+
+      // Note: Photo capture is handled by the HomeScreen component
+      // which manages the camera independently. This function handles audio.
 
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
       });
 
+      console.log("[EvidenceCapture] Starting 30-second audio recording...");
       recording = new Audio.Recording();
       currentRecording = recording;
       
       await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
       await recording.startAsync();
 
-      // Record for 5 seconds
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      // Record for 30 seconds
+      await new Promise((resolve) => setTimeout(resolve, 30000));
 
       if (sessionId !== captureSessionId || currentRecording !== recording) {
         return;
       }
 
+      console.log("[EvidenceCapture] 30-second recording complete. Stopping and uploading...");
       await recording.stopAndUnloadAsync();
       const localUri = recording.getURI();
 
@@ -135,9 +140,9 @@ export const startEvidenceCapture = (alertId: string, token: string) => {
         file_base64: base64,
       });
 
-      console.log("[EvidenceCapture] Successfully uploaded audio evidence snippet.");
+      console.log("[EvidenceCapture] Successfully uploaded 30-second audio evidence.");
     } catch (e) {
-      console.error("[EvidenceCapture] Audio snippet record/upload failed:", e);
+      console.error("[EvidenceCapture] Audio record/upload failed:", e);
     } finally {
       if (recording && currentRecording === recording) {
         currentRecording = null;
@@ -145,15 +150,15 @@ export const startEvidenceCapture = (alertId: string, token: string) => {
     }
   };
 
-  // Perform an initial capture immediately
-  void recordAndUploadSnippet();
+  // Perform initial capture cycle immediately
+  void captureCycle();
 
-  // Then record every 30 seconds
+  // Then repeat every 30 seconds (photo capture is handled by HomeScreen timer)
   captureInterval = setInterval(() => {
-    void recordAndUploadSnippet();
+    void captureCycle();
   }, 30000);
 
-  console.log("[EvidenceCapture] Started audio evidence capture loop for alert", alertId);
+  console.log("[EvidenceCapture] Started evidence capture loop (30s audio + photo cycle) for alert", alertId);
 };
 
 export const uploadPhotoEvidence = async (alertId: string, token: string, localUri: string) => {

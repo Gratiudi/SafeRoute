@@ -431,14 +431,17 @@ function buildEmergencySms({
     .join(" ");
 }
 
-function buildUnsafeCheckInSms({ user, durationSeconds }) {
+function buildUnsafeCheckInSms({ user, durationSeconds, locationUrl }) {
   const name = user?.full_name || "A SafeRoute user";
   const minutes = Math.max(1, Math.ceil(Number(durationSeconds || 60) / 60));
   return [
     `SafeRoute check-in from ${name}.`,
     `They feel unsafe and started a ${minutes}-minute safety timer.`,
+    locationUrl ? `View location: ${locationUrl}` : null,
     "If they do not confirm they are safe, this will escalate to SOS.",
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 async function notifyContacts(contacts, messageBody) {
@@ -1029,7 +1032,7 @@ app.delete("/api/emergency-contacts/:id", requireAuth, async (req, res) => {
 // Medium alert: start countdown window
 app.post("/api/medium/start", requireAuth, async (req, res) => {
   const { user_id } = req.user;
-  const { duration_seconds, notify_contact_ids } = req.body || {};
+  const { duration_seconds, notify_contact_ids, latitude, longitude } = req.body || {};
   const duration = clamp(Number(duration_seconds || 60), 15, 300);
 
   const { data: alert, error } = await supabase
@@ -1058,6 +1061,7 @@ app.post("/api/medium/start", requireAuth, async (req, res) => {
     : [];
   let notifiedContacts = [];
   let smsResults = [];
+  let shareUrl = null;
 
   if (selectedContactIds.length > 0) {
     const contacts = await fetchUserContacts(user_id);
@@ -1065,9 +1069,26 @@ app.post("/api/medium/start", requireAuth, async (req, res) => {
     notifiedContacts = contacts.filter((contact) =>
       selectedContactIds.includes(String(contact.contact_id)),
     );
+
+    // Create a location share with the selected contacts
+    try {
+      if (Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude))) {
+        const share = await createLocationShare(
+          user_id,
+          req,
+          latitude,
+          longitude,
+          selectedContactIds,
+        );
+        shareUrl = share.share_url;
+      }
+    } catch (shareErr) {
+      console.warn("[Medium] Failed to create location share:", shareErr);
+    }
+
     smsResults = await notifyContacts(
       notifiedContacts,
-      buildUnsafeCheckInSms({ user, durationSeconds: duration }),
+      buildUnsafeCheckInSms({ user, durationSeconds: duration, locationUrl: shareUrl }),
     );
   }
 
