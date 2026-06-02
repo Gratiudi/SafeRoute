@@ -43,6 +43,7 @@ export default function ShareScreen() {
   const [shareCode, setShareCode] = useState<string | null>(null);
   const [shareLoading, setShareLoading] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
+  const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
 
   const updateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -124,6 +125,12 @@ export default function ShareScreen() {
   const handleToggleSharing = async (value: boolean) => {
     if (!token) return;
     setShareError(null);
+    
+    if (value && selectedContactIds.length === 0) {
+      setShareError("Please select at least one contact to share your location with.");
+      return;
+    }
+    
     setShareLoading(true);
     try {
       if (value) {
@@ -140,6 +147,7 @@ export default function ShareScreen() {
           body: JSON.stringify({
             latitude: pos.coords.latitude,
             longitude: pos.coords.longitude,
+            selected_contact_ids: selectedContactIds,
           }),
         });
         const code: string = data?.share_code;
@@ -242,8 +250,8 @@ export default function ShareScreen() {
           <View style={styles.activeBanner}>
             <View style={styles.activeDot} />
             <Text style={styles.activeText}>
-              Sharing live location with {contacts.length} contact
-              {contacts.length !== 1 ? "s" : ""}
+              Sharing location with {selectedContactIds.length} contact
+              {selectedContactIds.length !== 1 ? "s" : ""}
             </Text>
           </View>
         )}
@@ -311,45 +319,81 @@ export default function ShareScreen() {
         </View>
       ) : (
         <View style={styles.contactList}>
-          {contacts.map((contact) => (
-            <View key={contact.contact_id} style={styles.contactCard}>
-              <View style={styles.row}>
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>
-                    {contact.name.charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rowTitle}>{contact.name}</Text>
-                  <Text style={styles.rowSub}>{contact.phone_number}</Text>
-                  {contact.relationship ? (
-                    <Text style={styles.rowMeta}>{contact.relationship}</Text>
-                  ) : null}
-                </View>
-                <View
-                  style={[
-                    styles.statusPill,
-                    isLiveSharing ? styles.statusPillActive : styles.statusPillInactive,
-                  ]}
-                >
+          {contacts.map((contact) => {
+            const isSelected = selectedContactIds.includes(contact.contact_id);
+            return (
+              <Pressable
+                key={contact.contact_id}
+                onPress={() => {
+                  if (isSelected) {
+                    setSelectedContactIds((prev) =>
+                      prev.filter((id) => id !== contact.contact_id)
+                    );
+                  } else {
+                    setSelectedContactIds((prev) => [...prev, contact.contact_id]);
+                  }
+                }}
+                style={[
+                  styles.contactCard,
+                  isSelected && styles.contactCardSelected,
+                ]}
+              >
+                <View style={styles.row}>
                   <View
                     style={[
-                      styles.statusDot,
-                      { backgroundColor: isLiveSharing ? "#16A34A" : "#94A3B8" },
-                    ]}
-                  />
-                  <Text
-                    style={[
-                      styles.statusText,
-                      { color: isLiveSharing ? "#16A34A" : "#64748B" },
+                      styles.checkbox,
+                      isSelected && styles.checkboxSelected,
                     ]}
                   >
-                    {isLiveSharing ? "Sharing" : "Off"}
-                  </Text>
+                    {isSelected && (
+                      <MaterialIcons name="check" size={16} color="#FFFFFF" />
+                    )}
+                  </View>
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarText}>
+                      {contact.name.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.rowTitle}>{contact.name}</Text>
+                    <Text style={styles.rowSub}>{contact.phone_number}</Text>
+                    {contact.relationship ? (
+                      <Text style={styles.rowMeta}>{contact.relationship}</Text>
+                    ) : null}
+                  </View>
+                  <View
+                    style={[
+                      styles.statusPill,
+                      isLiveSharing && isSelected
+                        ? styles.statusPillActive
+                        : styles.statusPillInactive,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.statusDot,
+                        {
+                          backgroundColor:
+                            isLiveSharing && isSelected ? "#16A34A" : "#94A3B8",
+                        },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.statusText,
+                        {
+                          color:
+                            isLiveSharing && isSelected ? "#16A34A" : "#64748B",
+                        },
+                      ]}
+                    >
+                      {isLiveSharing && isSelected ? "Sharing" : "Off"}
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            </View>
-          ))}
+              </Pressable>
+            );
+          })}
         </View>
       )}
 
@@ -488,6 +532,25 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: "#E2E8F0",
+  },
+  contactCardSelected: {
+    backgroundColor: "#F0FDF4",
+    borderColor: "#16A34A",
+    borderWidth: 2,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#E2E8F0",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+  },
+  checkboxSelected: {
+    backgroundColor: "#16A34A",
+    borderColor: "#16A34A",
   },
   avatar: {
     width: 40,

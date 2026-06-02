@@ -119,6 +119,7 @@ create table if not exists location_shares (
   share_id text not null default ('Shr_' || substr(md5(gen_random_uuid()::text), 1, 8)),
   user_id text not null references users(user_id) on delete cascade,
   share_code text not null unique,
+  shared_contact_ids text[],
   is_active boolean not null default true,
   started_at timestamptz not null default now(),
   ended_at timestamptz,

@@ -7,7 +7,6 @@ const fetch = require("node-fetch");
 const crypto = require("crypto");
 const { supabase } = require("./supabaseClient");
 
-
 const app = express();
 const port = process.env.PORT || 4000;
 
@@ -29,7 +28,9 @@ const canSendSms =
   SMSETHIOPIA_API_KEY.length > 0 &&
   !SMSETHIOPIA_API_KEY.startsWith("your-");
 if (!canSendSms) {
-  console.warn("SMSEthiopia not configured. SMS notifications will be simulated.");
+  console.warn(
+    "SMSEthiopia not configured. SMS notifications will be simulated.",
+  );
 }
 
 function clamp(value, min, max) {
@@ -48,29 +49,75 @@ async function fetchJson(url) {
 async function mapboxGeocode(name) {
   const lower = name.toLowerCase();
   const outOfCityKeywords = [
-    "adama", "nazret", "nazareth", "bishoftu", "debre zeyit", "debrezeit",
-    "hawassa", "awassa", "bahir dar", "bahirdar", "gondar", "gonder",
-    "mekelle", "mekele", "dire dawa", "diredawa", "harar", "jimma",
-    "dessie", "dese", "shashemene", "shashe", "nekemte", "arba minch",
-    "arbaminch", "sodo", "hosaina", "jijiga", "gambela", "gambella",
-    "asosa", "assosa", "sebeta", "burayu", "sululta", "legetafo",
-    "weliso", "waliso", "amibo", "fitche", "debre birhan", "debreberhan",
-    "dukem", "mojo", "modjo", "ziway", "batu", "ambo", "hossana",
-    "london", "paris", "new york"
+    "adama",
+    "nazret",
+    "nazareth",
+    "bishoftu",
+    "debre zeyit",
+    "debrezeit",
+    "hawassa",
+    "awassa",
+    "bahir dar",
+    "bahirdar",
+    "gondar",
+    "gonder",
+    "mekelle",
+    "mekele",
+    "dire dawa",
+    "diredawa",
+    "harar",
+    "jimma",
+    "dessie",
+    "dese",
+    "shashemene",
+    "shashe",
+    "nekemte",
+    "arba minch",
+    "arbaminch",
+    "sodo",
+    "hosaina",
+    "jijiga",
+    "gambela",
+    "gambella",
+    "asosa",
+    "assosa",
+    "sebeta",
+    "burayu",
+    "sululta",
+    "legetafo",
+    "weliso",
+    "waliso",
+    "amibo",
+    "fitche",
+    "debre birhan",
+    "debreberhan",
+    "dukem",
+    "mojo",
+    "modjo",
+    "ziway",
+    "batu",
+    "ambo",
+    "hossana",
+    "london",
+    "paris",
+    "new york",
   ];
-  
-  const hasOutOfCityKeyword = outOfCityKeywords.some(keyword => {
-    const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+
+  const hasOutOfCityKeyword = outOfCityKeywords.some((keyword) => {
+    const regex = new RegExp(`\\b${keyword}\\b`, "i");
     return regex.test(lower);
   });
 
-  const queryName = (hasOutOfCityKeyword && !lower.includes("addis ababa"))
-    ? `${name}, Ethiopia`
-    : (lower.includes("addis ababa") ? name : `${name}, Addis Ababa, Ethiopia`);
+  const queryName =
+    hasOutOfCityKeyword && !lower.includes("addis ababa")
+      ? `${name}, Ethiopia`
+      : lower.includes("addis ababa")
+        ? name
+        : `${name}, Addis Ababa, Ethiopia`;
 
   if (MAPBOX_TOKEN) {
     const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
-      queryName
+      queryName,
     )}.json?limit=1&access_token=${MAPBOX_TOKEN}`;
     const data = await fetchJson(url);
     const feature = data?.features?.[0];
@@ -79,7 +126,7 @@ async function mapboxGeocode(name) {
   }
 
   const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(
-    queryName
+    queryName,
   )}`;
   const response = await fetch(url, {
     headers: {
@@ -112,7 +159,7 @@ function getDistanceMeters(lat1, lon1, lat2, lon2) {
 function isWithinAddisAbaba(coords) {
   if (!coords) return false;
   const { lat, lng } = coords;
-  return lat >= 8.83 && lat <= 9.10 && lng >= 38.62 && lng <= 38.90;
+  return lat >= 8.83 && lat <= 9.1 && lng >= 38.62 && lng <= 38.9;
 }
 
 async function mapboxDirections(start, end) {
@@ -126,7 +173,9 @@ async function mapboxDirections(start, end) {
 }
 
 async function getBaseSafetyScore(time_of_day) {
-  const { data: factors, error } = await supabase.from("safety_factors").select("risk_score");
+  const { data: factors, error } = await supabase
+    .from("safety_factors")
+    .select("risk_score");
   let avgRisk = 5;
   if (!error && factors && factors.length > 0) {
     const sum = factors.reduce((acc, f) => acc + (f.risk_score || 0), 0);
@@ -212,7 +261,8 @@ async function sendSmsethiopiaSms(to, body) {
   }
 
   if (!response.ok || json?.status === "error") {
-    const errMsg = json?.message || text || `SMSEthiopia HTTP ${response.status}`;
+    const errMsg =
+      json?.message || text || `SMSEthiopia HTTP ${response.status}`;
     const err = new Error(errMsg);
     // Tag whitelist errors so callers can fall back gracefully
     if (typeof errMsg === "string" && errMsg.includes("WHITELISTED")) {
@@ -273,7 +323,7 @@ async function sendSms(to, body) {
         if (fallbackErr.code === "SMSETHIOPIA_NOT_WHITELISTED") {
           console.warn(
             `SMSEthiopia: ${msisdn} is not whitelisted on this starter campaign. ` +
-            "Whitelist it via the SMSEthiopia whitelist API, or upgrade your plan."
+              "Whitelist it via the SMSEthiopia whitelist API, or upgrade your plan.",
           );
         } else {
           console.error("SMSEthiopia fallback failed:", fallbackErr.message);
@@ -281,7 +331,9 @@ async function sendSms(to, body) {
       }
     }
 
-    console.log(`\n=== SIMULATED SMS TO ${msisdn} ===\n${body}\n==============================\n`);
+    console.log(
+      `\n=== SIMULATED SMS TO ${msisdn} ===\n${body}\n==============================\n`,
+    );
 
     return { status: "simulated" };
   }
@@ -296,14 +348,22 @@ function mapsLink(latitude, longitude) {
 }
 
 function getPublicBaseUrl(req) {
-  return (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+  return (
+    process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`
+  ).replace(/\/$/, "");
 }
 
 function buildShareUrl(req, shareCode) {
   return `${getPublicBaseUrl(req)}/api/location/share/${shareCode}`;
 }
 
-async function createLocationShare(user_id, req, latitude, longitude) {
+async function createLocationShare(
+  user_id,
+  req,
+  latitude,
+  longitude,
+  selectedContactIds = [],
+) {
   const share_code = crypto.randomBytes(6).toString("hex");
 
   await supabase
@@ -314,7 +374,15 @@ async function createLocationShare(user_id, req, latitude, longitude) {
 
   const { data: share, error } = await supabase
     .from("location_shares")
-    .insert([{ user_id, share_code, is_active: true }])
+    .insert([
+      {
+        user_id,
+        share_code,
+        is_active: true,
+        shared_contact_ids:
+          selectedContactIds.length > 0 ? selectedContactIds : null,
+      },
+    ])
     .select("*")
     .single();
 
@@ -340,7 +408,14 @@ async function createLocationShare(user_id, req, latitude, longitude) {
   };
 }
 
-function buildEmergencySms({ alertType, user, latitude, longitude, liveLocationUrl, isEscalation = false }) {
+function buildEmergencySms({
+  alertType,
+  user,
+  latitude,
+  longitude,
+  liveLocationUrl,
+  isEscalation = false,
+}) {
   const name = user?.full_name || "A SafeRoute user";
   const locationUrl = liveLocationUrl || mapsLink(latitude, longitude);
   const reason = isEscalation
@@ -416,38 +491,39 @@ app.get("/", (req, res) => {
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });
 });
- //here
+//here
 
- app.post("/api/test-twilio", async (req, res) => {
-   const { phone_number, message } = req.body || {};
+app.post("/api/test-twilio", async (req, res) => {
+  const { phone_number, message } = req.body || {};
 
-   if (!phone_number) {
-     return res.status(400).json({ error: "phone_number is required" });
-   }
+  if (!phone_number) {
+    return res.status(400).json({ error: "phone_number is required" });
+  }
 
-   try {
-     const result = await sendTwilioSms(
-       phone_number,
-       message || "SafeRoute Twilio test message 🚀"
-     );
+  try {
+    const result = await sendTwilioSms(
+      phone_number,
+      message || "SafeRoute Twilio test message 🚀",
+    );
 
-     res.json({
-       ok: true,
-       sid: result.sid,
-       status: result.status,
-     });
-   } catch (err) {
-     console.error("Twilio error:", err);
-     res.status(500).json({
-       ok: false,
-       error: err.message,
-     });
-   }
- });
+    res.json({
+      ok: true,
+      sid: result.sid,
+      status: result.status,
+    });
+  } catch (err) {
+    console.error("Twilio error:", err);
+    res.status(500).json({
+      ok: false,
+      error: err.message,
+    });
+  }
+});
 // SMS provider smoke test (no database required)
 app.post("/api/test-sms", async (req, res) => {
   const { phone_number, message } = req.body || {};
-  const cleanPhone = typeof phone_number === "string" ? phone_number.trim() : "";
+  const cleanPhone =
+    typeof phone_number === "string" ? phone_number.trim() : "";
 
   if (!cleanPhone) {
     return res.status(400).json({ error: "phone_number is required" });
@@ -455,13 +531,15 @@ app.post("/api/test-sms", async (req, res) => {
 
   const phoneRegex = /^\+?[1-9]\d{1,14}$/;
   if (!phoneRegex.test(cleanPhone)) {
-    return res.status(400).json({ error: "Invalid phone number format. Use +251..." });
+    return res
+      .status(400)
+      .json({ error: "Invalid phone number format. Use +251..." });
   }
 
   try {
     const result = await sendSms(
       cleanPhone,
-      message || "SafeRoute test SMS: your SMS provider is connected."
+      message || "SafeRoute test SMS: your SMS provider is connected.",
     );
     res.json({ ok: true, phone_number: cleanPhone, sms: result });
   } catch (err) {
@@ -545,17 +623,26 @@ app.post("/api/auth/send-otp", async (req, res) => {
   const cleanPhone = phone_number.trim();
   const phoneRegex = /^\+[1-9]\d{1,14}$/;
   if (!phoneRegex.test(cleanPhone)) {
-    return res.status(400).json({ error: "Invalid phone number format. Must be E.164 (e.g., +251...)" });
+    return res
+      .status(400)
+      .json({
+        error: "Invalid phone number format. Must be E.164 (e.g., +251...)",
+      });
   }
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   otpStore.set(cleanPhone, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
 
   if (!canSendSms) {
-    console.log(`\n=== SIMULATED OTP FOR ${cleanPhone} ===\n${otp}\n=========================================\n`);
+    console.log(
+      `\n=== SIMULATED OTP FOR ${cleanPhone} ===\n${otp}\n=========================================\n`,
+    );
   }
   try {
-    await sendSms(cleanPhone, `Your SafeRoute verification code is ${otp}. It expires in 5 minutes.`);
+    await sendSms(
+      cleanPhone,
+      `Your SafeRoute verification code is ${otp}. It expires in 5 minutes.`,
+    );
     res.json({ message: "OTP sent successfully" });
   } catch (err) {
     console.error("SMSEthiopia OTP send error:", err);
@@ -572,7 +659,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
   }
   const cleanPhone = phone_number.trim();
   const stored = otpStore.get(cleanPhone);
-  
+
   if (!stored) {
     return res.status(400).json({ error: "No OTP found for this number" });
   }
@@ -583,7 +670,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
   if (stored.otp !== otp.trim()) {
     return res.status(400).json({ error: "Invalid OTP" });
   }
-  
+
   otpStore.delete(cleanPhone);
   res.json({ message: "OTP verified successfully" });
 });
@@ -591,12 +678,17 @@ app.post("/api/auth/verify-otp", async (req, res) => {
 // REGISTER
 app.post("/api/auth/register", async (req, res) => {
   const { full_name, email, phone_number, password } = req.body;
-  const cleanEmail = typeof email === "string" ? email.trim().toLowerCase() : null;
-  const cleanPhone = typeof phone_number === "string" ? phone_number.trim() : null;
-  const cleanName = typeof full_name === "string" ? full_name.trim() : full_name;
+  const cleanEmail =
+    typeof email === "string" ? email.trim().toLowerCase() : null;
+  const cleanPhone =
+    typeof phone_number === "string" ? phone_number.trim() : null;
+  const cleanName =
+    typeof full_name === "string" ? full_name.trim() : full_name;
 
   if (!cleanName || !password) {
-    return res.status(400).json({ error: "full_name and password are required" });
+    return res
+      .status(400)
+      .json({ error: "full_name and password are required" });
   }
 
   if (!cleanEmail && !cleanPhone) {
@@ -620,7 +712,7 @@ app.post("/api/auth/register", async (req, res) => {
   const password_hash = await bcrypt.hash(password, 10);
 
   const { data, error } = await supabase
-    .from('users')
+    .from("users")
     .insert([
       {
         full_name: cleanName,
@@ -629,7 +721,7 @@ app.post("/api/auth/register", async (req, res) => {
         password: password_hash,
       },
     ])
-    .select('user_id, full_name, email')
+    .select("user_id, full_name, email")
     .single();
 
   if (error) {
@@ -641,33 +733,35 @@ app.post("/api/auth/register", async (req, res) => {
 });
 
 // LOGIN
-app.post('/api/auth/login', async (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   const { email, phone_number, identifier, password } = req.body;
   const loginValue = identifier || email || phone_number;
 
   if (!loginValue || !password) {
-    return res.status(400).json({ error: 'email/phone and password are required' });
+    return res
+      .status(400)
+      .json({ error: "email/phone and password are required" });
   }
 
   const { data: user, error } = await supabase
-    .from('users')
-    .select('*')
+    .from("users")
+    .select("*")
     .or(`email.eq.${loginValue},phone_number.eq.${loginValue}`)
     .single();
 
   if (error || !user) {
-    return res.status(400).json({ error: 'Invalid email or password' });
+    return res.status(400).json({ error: "Invalid email or password" });
   }
 
   const matches = await bcrypt.compare(password, user.password);
   if (!matches) {
-    return res.status(400).json({ error: 'Invalid email or password' });
+    return res.status(400).json({ error: "Invalid email or password" });
   }
 
   const token = jwt.sign(
     { user_id: user.user_id, email: user.email },
-    process.env.JWT_SECRET || 'dev-secret',
-    { expiresIn: '7d' }
+    process.env.JWT_SECRET || "dev-secret",
+    { expiresIn: "7d" },
   );
 
   res.json({
@@ -682,72 +776,76 @@ app.post('/api/auth/login', async (req, res) => {
 
 // VERIFY PASSWORD — confirms the current user's password without re-issuing a token.
 // Used by the app to gate access to sensitive sections (e.g. Evidence tab).
-app.post('/api/auth/verify-password', requireAuth, async (req, res) => {
+app.post("/api/auth/verify-password", requireAuth, async (req, res) => {
   const { user_id } = req.user;
   const { password } = req.body;
 
   if (!password) {
-    return res.status(400).json({ error: 'password is required' });
+    return res.status(400).json({ error: "password is required" });
   }
 
   const { data: user, error } = await supabase
-    .from('users')
-    .select('password')
-    .eq('user_id', user_id)
+    .from("users")
+    .select("password")
+    .eq("user_id", user_id)
     .single();
 
   if (error || !user) {
-    return res.status(404).json({ error: 'User not found' });
+    return res.status(404).json({ error: "User not found" });
   }
 
   const matches = await bcrypt.compare(password, user.password);
   if (!matches) {
-    return res.status(401).json({ error: 'Incorrect password' });
+    return res.status(401).json({ error: "Incorrect password" });
   }
 
   res.json({ ok: true });
 });
 
 // CHANGE PASSWORD — requires the current password before storing a new hash.
-app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+app.post("/api/auth/change-password", requireAuth, async (req, res) => {
   const { user_id } = req.user;
   const { current_password, new_password } = req.body || {};
 
   if (!current_password || !new_password) {
-    return res.status(400).json({ error: 'current_password and new_password are required' });
+    return res
+      .status(400)
+      .json({ error: "current_password and new_password are required" });
   }
 
   if (String(new_password).length < 6) {
-    return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    return res
+      .status(400)
+      .json({ error: "New password must be at least 6 characters" });
   }
 
   const { data: user, error } = await supabase
-    .from('users')
-    .select('password')
-    .eq('user_id', user_id)
+    .from("users")
+    .select("password")
+    .eq("user_id", user_id)
     .single();
 
   if (error || !user) {
-    return res.status(404).json({ error: 'User not found' });
+    return res.status(404).json({ error: "User not found" });
   }
 
   const matches = await bcrypt.compare(current_password, user.password);
   if (!matches) {
-    return res.status(401).json({ error: 'Current password is incorrect' });
+    return res.status(401).json({ error: "Current password is incorrect" });
   }
 
   const password_hash = await bcrypt.hash(new_password, 10);
   const { error: updateError } = await supabase
-    .from('users')
+    .from("users")
     .update({ password: password_hash })
-    .eq('user_id', user_id);
+    .eq("user_id", user_id);
 
   if (updateError) {
-    console.error('Supabase error (change password):', updateError);
+    console.error("Supabase error (change password):", updateError);
     return res.status(400).json({ error: updateError.message });
   }
 
-  res.json({ ok: true, message: 'Password changed successfully' });
+  res.json({ ok: true, message: "Password changed successfully" });
 });
 
 // List current user's routes (protected)
@@ -823,13 +921,19 @@ app.post("/api/emergency-contacts", requireAuth, async (req, res) => {
   const { name, phone_number, relationship } = req.body;
 
   if (!name || !phone_number) {
-    return res.status(400).json({ error: "name and phone_number are required" });
+    return res
+      .status(400)
+      .json({ error: "name and phone_number are required" });
   }
 
   const cleanPhone = phone_number.trim();
   const phoneRegex = /^\+[1-9]\d{1,14}$/;
   if (!phoneRegex.test(cleanPhone)) {
-    return res.status(400).json({ error: "Invalid phone number format. Must be E.164 (e.g., +251...)" });
+    return res
+      .status(400)
+      .json({
+        error: "Invalid phone number format. Must be E.164 (e.g., +251...)",
+      });
   }
 
   const { data, error } = await supabase
@@ -873,7 +977,11 @@ app.put("/api/emergency-contacts/:id", requireAuth, async (req, res) => {
     const cleanPhone = phone_number.trim();
     const phoneRegex = /^\+[1-9]\d{1,14}$/;
     if (!phoneRegex.test(cleanPhone)) {
-      return res.status(400).json({ error: "Invalid phone number format. Must be E.164 (e.g., +251...)" });
+      return res
+        .status(400)
+        .json({
+          error: "Invalid phone number format. Must be E.164 (e.g., +251...)",
+        });
     }
     updates.phone_number = cleanPhone;
   }
@@ -942,7 +1050,9 @@ app.post("/api/medium/start", requireAuth, async (req, res) => {
   }
 
   const started_at = new Date(alert.timestamp || new Date().toISOString());
-  const expires_at = new Date(started_at.getTime() + duration * 1000).toISOString();
+  const expires_at = new Date(
+    started_at.getTime() + duration * 1000,
+  ).toISOString();
   const selectedContactIds = Array.isArray(notify_contact_ids)
     ? notify_contact_ids.map(String)
     : [];
@@ -953,11 +1063,11 @@ app.post("/api/medium/start", requireAuth, async (req, res) => {
     const contacts = await fetchUserContacts(user_id);
     const user = await fetchUserProfile(user_id);
     notifiedContacts = contacts.filter((contact) =>
-      selectedContactIds.includes(String(contact.contact_id))
+      selectedContactIds.includes(String(contact.contact_id)),
     );
     smsResults = await notifyContacts(
       notifiedContacts,
-      buildUnsafeCheckInSms({ user, durationSeconds: duration })
+      buildUnsafeCheckInSms({ user, durationSeconds: duration }),
     );
   }
 
@@ -1057,19 +1167,55 @@ app.post("/api/medium/escalate", requireAuth, async (req, res) => {
       longitude,
       liveLocationUrl: share?.share_url,
       isEscalation: true,
-    })
+    }),
   );
 
-  res.status(201).json({ medium_resolved: true, sos_alert: sosAlert, share, sms: smsResults });
+  res
+    .status(201)
+    .json({
+      medium_resolved: true,
+      sos_alert: sosAlert,
+      share,
+      sms: smsResults,
+    });
 });
 
 // Location sharing: start a share session
 app.post("/api/location/share/start", requireAuth, async (req, res) => {
   const { user_id } = req.user;
-  const { latitude, longitude } = req.body || {};
+  const { latitude, longitude, selected_contact_ids } = req.body || {};
 
   try {
-    const share = await createLocationShare(user_id, req, latitude, longitude);
+    const share = await createLocationShare(
+      user_id,
+      req,
+      latitude,
+      longitude,
+      selected_contact_ids || [],
+    );
+
+    // Send SMS to selected contacts with the share link
+    if (
+      Array.isArray(selected_contact_ids) &&
+      selected_contact_ids.length > 0
+    ) {
+      const selectedContacts = await fetchUserContacts(user_id);
+      const contactsToNotify = selectedContacts.filter((c) =>
+        selected_contact_ids.includes(c.contact_id),
+      );
+
+      if (contactsToNotify.length > 0) {
+        const user = await fetchUserProfile(user_id);
+        const message = [
+          `SafeRoute location sharing from ${user?.full_name || "A SafeRoute user"}.`,
+          `They are sharing their live location with you.`,
+          `View location: ${share.share_url}`,
+        ].join(" ");
+
+        await notifyContacts(contactsToNotify, message);
+      }
+    }
+
     res.status(201).json(share);
   } catch (error) {
     console.error("Supabase error:", error);
@@ -1083,7 +1229,9 @@ app.post("/api/location/share/stop", requireAuth, async (req, res) => {
   const { share_id, share_code } = req.body || {};
 
   if (!share_id && !share_code) {
-    return res.status(400).json({ error: "share_id or share_code is required" });
+    return res
+      .status(400)
+      .json({ error: "share_id or share_code is required" });
   }
 
   let query = supabase
@@ -1112,7 +1260,9 @@ app.post("/api/location/share/update", requireAuth, async (req, res) => {
   const { share_code, latitude, longitude } = req.body || {};
 
   if (!share_code || latitude === undefined || longitude === undefined) {
-    return res.status(400).json({ error: "share_code, latitude, and longitude are required" });
+    return res
+      .status(400)
+      .json({ error: "share_code, latitude, and longitude are required" });
   }
 
   const { data: share, error: shareError } = await supabase
@@ -1124,7 +1274,9 @@ app.post("/api/location/share/update", requireAuth, async (req, res) => {
     .single();
 
   if (shareError || !share) {
-    return res.status(403).json({ error: "Active share not found for this user" });
+    return res
+      .status(403)
+      .json({ error: "Active share not found for this user" });
   }
 
   const { data, error } = await supabase
@@ -1237,7 +1389,7 @@ app.post("/api/sos/start", requireAuth, async (req, res) => {
       latitude,
       longitude,
       liveLocationUrl: share?.share_url,
-    })
+    }),
   );
 
   res.status(201).json({
@@ -1315,21 +1467,28 @@ app.post("/api/sos/evidence", requireAuth, async (req, res) => {
       // If the bucket doesn't exist surface a clear message — it must be
       // created manually in the Supabase dashboard (Storage > New bucket)
       // because the backend uses the anon key which cannot manage buckets.
-      if (uploadError && uploadError.message?.toLowerCase().includes("bucket not found")) {
+      if (
+        uploadError &&
+        uploadError.message?.toLowerCase().includes("bucket not found")
+      ) {
         console.error(
           `Supabase Storage bucket '${EVIDENCE_BUCKET}' does not exist. ` +
-          "Please create it in the Supabase dashboard: Storage → New bucket → " +
-          `name it '${EVIDENCE_BUCKET}', set it to private.`
+            "Please create it in the Supabase dashboard: Storage → New bucket → " +
+            `name it '${EVIDENCE_BUCKET}', set it to private.`,
         );
       }
 
       if (uploadError) {
         console.error("Supabase Storage error during upload:", uploadError);
-        return res.status(500).json({ error: `Storage upload failed: ${uploadError.message}` });
+        return res
+          .status(500)
+          .json({ error: `Storage upload failed: ${uploadError.message}` });
       }
     } catch (err) {
       console.error("Failed to parse/upload base64 payload:", err);
-      return res.status(500).json({ error: `Storage upload failed: ${err.message}` });
+      return res
+        .status(500)
+        .json({ error: `Storage upload failed: ${err.message}` });
     }
   }
 
@@ -1355,38 +1514,42 @@ app.post("/api/sos/evidence", requireAuth, async (req, res) => {
 });
 
 // Evidence list for a specific alert (protected)
-app.get("/api/sos/history/:alert_id/evidence", requireAuth, async (req, res) => {
-  const { user_id } = req.user;
-  const alertId = req.params.alert_id;
+app.get(
+  "/api/sos/history/:alert_id/evidence",
+  requireAuth,
+  async (req, res) => {
+    const { user_id } = req.user;
+    const alertId = req.params.alert_id;
 
-  if (!alertId) {
-    return res.status(400).json({ error: "Invalid alert id" });
-  }
+    if (!alertId) {
+      return res.status(400).json({ error: "Invalid alert id" });
+    }
 
-  const { data: alert, error: alertError } = await supabase
-    .from("emergency_alerts")
-    .select("alert_id")
-    .eq("alert_id", alertId)
-    .eq("user_id", user_id)
-    .single();
+    const { data: alert, error: alertError } = await supabase
+      .from("emergency_alerts")
+      .select("alert_id")
+      .eq("alert_id", alertId)
+      .eq("user_id", user_id)
+      .single();
 
-  if (alertError || !alert) {
-    return res.status(403).json({ error: "Alert not found for this user" });
-  }
+    if (alertError || !alert) {
+      return res.status(403).json({ error: "Alert not found for this user" });
+    }
 
-  const { data, error } = await supabase
-    .from("emergency_evidence")
-    .select("*")
-    .eq("alert_id", alertId)
-    .order("timestamp", { ascending: true });
+    const { data, error } = await supabase
+      .from("emergency_evidence")
+      .select("*")
+      .eq("alert_id", alertId)
+      .order("timestamp", { ascending: true });
 
-  if (error) {
-    console.error("Supabase error:", error);
-    return res.status(400).json({ error: error.message });
-  }
+    if (error) {
+      console.error("Supabase error:", error);
+      return res.status(400).json({ error: error.message });
+    }
 
-  res.json(data);
-});
+    res.json(data);
+  },
+);
 
 // Generate a short-lived signed URL for a private evidence file (protected)
 // GET /api/sos/evidence/signed-url?file_path=evidence/123/audio_xyz.m4a
@@ -1395,7 +1558,9 @@ app.get("/api/sos/evidence/signed-url", requireAuth, async (req, res) => {
   const { file_path } = req.query;
 
   if (!file_path || typeof file_path !== "string") {
-    return res.status(400).json({ error: "file_path query parameter is required" });
+    return res
+      .status(400)
+      .json({ error: "file_path query parameter is required" });
   }
 
   // Verify the path belongs to an alert owned by this user:
@@ -1412,7 +1577,9 @@ app.get("/api/sos/evidence/signed-url", requireAuth, async (req, res) => {
       .single();
 
     if (alertError) {
-      return res.status(403).json({ error: "Access denied to this evidence file" });
+      return res
+        .status(403)
+        .json({ error: "Access denied to this evidence file" });
     }
   }
 
@@ -1423,7 +1590,9 @@ app.get("/api/sos/evidence/signed-url", requireAuth, async (req, res) => {
 
   if (error || !data?.signedUrl) {
     console.error("Failed to create signed URL:", error);
-    return res.status(500).json({ error: error?.message || "Failed to generate signed URL" });
+    return res
+      .status(500)
+      .json({ error: error?.message || "Failed to generate signed URL" });
   }
 
   res.json({ signed_url: data.signedUrl });
@@ -1527,7 +1696,8 @@ app.get("/api/ratings/aggregate", requireAuth, async (req, res) => {
   }
 
   const count = data?.length || 0;
-  const avg = count > 0 ? data.reduce((acc, r) => acc + (r.score || 0), 0) / count : 0;
+  const avg =
+    count > 0 ? data.reduce((acc, r) => acc + (r.score || 0), 0) / count : 0;
 
   res.json({ route_id, average_score: avg, count });
 });
@@ -1535,10 +1705,13 @@ app.get("/api/ratings/aggregate", requireAuth, async (req, res) => {
 // Crowd-sourced incident reporting (protected)
 app.post("/api/incidents", requireAuth, async (req, res) => {
   const { user_id } = req.user;
-  const { category, description, latitude, longitude, occurred_at } = req.body || {};
+  const { category, description, latitude, longitude, occurred_at } =
+    req.body || {};
 
   if (!category || latitude === undefined || longitude === undefined) {
-    return res.status(400).json({ error: "category, latitude, and longitude are required" });
+    return res
+      .status(400)
+      .json({ error: "category, latitude, and longitude are required" });
   }
 
   const { data, error } = await supabase
@@ -1583,10 +1756,13 @@ app.get("/api/incidents", requireAuth, async (req, res) => {
 // Traffic flow reports (protected)
 app.post("/api/traffic", requireAuth, async (req, res) => {
   const { user_id } = req.user;
-  const { segment_id, congestion_level, average_speed, reported_at } = req.body || {};
+  const { segment_id, congestion_level, average_speed, reported_at } =
+    req.body || {};
 
   if (!segment_id || congestion_level === undefined) {
-    return res.status(400).json({ error: "segment_id and congestion_level are required" });
+    return res
+      .status(400)
+      .json({ error: "segment_id and congestion_level are required" });
   }
 
   const { data, error } = await supabase
@@ -1632,7 +1808,9 @@ app.post("/api/road-closures", requireAuth, async (req, res) => {
   const { segment_id, reason, starts_at, ends_at } = req.body || {};
 
   if (!segment_id || !reason) {
-    return res.status(400).json({ error: "segment_id and reason are required" });
+    return res
+      .status(400)
+      .json({ error: "segment_id and reason are required" });
   }
 
   const { data, error } = await supabase
@@ -1678,7 +1856,9 @@ app.post("/api/crowd-reports", requireAuth, async (req, res) => {
   const { segment_id, note, safety_score, reported_at } = req.body || {};
 
   if (!segment_id || safety_score === undefined) {
-    return res.status(400).json({ error: "segment_id and safety_score are required" });
+    return res
+      .status(400)
+      .json({ error: "segment_id and safety_score are required" });
   }
 
   const { data, error } = await supabase
@@ -1730,13 +1910,15 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
     time_of_day,
   } = req.body || {};
 
-  if ((!start_location_name && (start_lat === undefined || start_lng === undefined)) ||
-      (!end_location_name && (end_lat === undefined || end_lng === undefined))) {
-    return res
-      .status(400)
-      .json({
-        error: "Provide start/end names or coordinates (start_lat/start_lng, end_lat/end_lng).",
-      });
+  if (
+    (!start_location_name &&
+      (start_lat === undefined || start_lng === undefined)) ||
+    (!end_location_name && (end_lat === undefined || end_lng === undefined))
+  ) {
+    return res.status(400).json({
+      error:
+        "Provide start/end names or coordinates (start_lat/start_lng, end_lat/end_lng).",
+    });
   }
 
   const baseScore = await getBaseSafetyScore(time_of_day);
@@ -1809,9 +1991,9 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
     }
 
     // Fetch all safety factors (joined with locations for coords)
-    const { data: factors, error: factorsError } = await supabase
-      .from("safety_factors")
-      .select(`
+    const { data: factors, error: factorsError } = await supabase.from(
+      "safety_factors",
+    ).select(`
         people_density,
         light_level,
         risk_score,
@@ -1865,13 +2047,18 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
         let pointIncidentPenalty = 0;
         if (incidents && incidents.length > 0) {
           for (const incident of incidents) {
-            const dist = getDistanceMeters(lat, lng, incident.latitude, incident.longitude);
+            const dist = getDistanceMeters(
+              lat,
+              lng,
+              incident.latitude,
+              incident.longitude,
+            );
             if (dist <= 200) {
-              pointIncidentPenalty += 0.20; // Subtract 20% safety per nearby crime report
+              pointIncidentPenalty += 0.2; // Subtract 20% safety per nearby crime report
             }
           }
         }
-        pointScore -= Math.min(pointIncidentPenalty, 0.60); // Cap incident penalty at 60%
+        pointScore -= Math.min(pointIncidentPenalty, 0.6); // Cap incident penalty at 60%
 
         // 2. Simple Safety Factor Check (within 200m)
         let pointLightingBonus = 0;
@@ -1879,27 +2066,37 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
 
         if (factors && factors.length > 0) {
           for (const factor of factors) {
-            if (!factor.locations || factor.locations.latitude === undefined) continue;
+            if (!factor.locations || factor.locations.latitude === undefined)
+              continue;
 
             const dist = getDistanceMeters(
               lat,
               lng,
               factor.locations.latitude,
-              factor.locations.longitude
+              factor.locations.longitude,
             );
 
             if (dist <= 200) {
               // Street lighting impact
-              if (factor.light_level !== null && factor.light_level !== undefined) {
+              if (
+                factor.light_level !== null &&
+                factor.light_level !== undefined
+              ) {
                 if (factor.light_level > 0.5) {
-                  pointLightingBonus = 0.10; // +10% for well-lit street
-                } else if (factor.light_level <= 0.5 && time_of_day === "night") {
-                  pointLightingBonus = -0.10; // -10% for dark street at night
+                  pointLightingBonus = 0.1; // +10% for well-lit street
+                } else if (
+                  factor.light_level <= 0.5 &&
+                  time_of_day === "night"
+                ) {
+                  pointLightingBonus = -0.1; // -10% for dark street at night
                 }
               }
 
               // Crowd density impact
-              if (factor.people_density !== null && factor.people_density !== undefined) {
+              if (
+                factor.people_density !== null &&
+                factor.people_density !== undefined
+              ) {
                 if (factor.people_density > 0.5) {
                   pointDensityBonus = 0.05; // +5% for active populated street
                 }
@@ -1909,10 +2106,11 @@ app.post("/api/safe-route/plan", requireAuth, async (req, res) => {
         }
 
         pointScore += pointLightingBonus + pointDensityBonus;
-        totalPointScore += clamp(pointScore, 0.10, 1.0);
+        totalPointScore += clamp(pointScore, 0.1, 1.0);
       }
 
-      let routeSafetyAverage = totalPointScore / Math.max(1, sampledCoords.length);
+      let routeSafetyAverage =
+        totalPointScore / Math.max(1, sampledCoords.length);
 
       // Add a slight preference for the first route option from provider
       routeSafetyAverage += idx === 0 ? 0.02 : -0.01 * idx;
@@ -1957,12 +2155,14 @@ app.post("/api/ratings", requireAuth, async (req, res) => {
 
   const { data, error } = await supabase
     .from("ratings")
-    .insert([{
-      user_id,
-      route_id,
-      score: clamp(Number(score), 1, 5),
-      comment: comment || null,
-    }])
+    .insert([
+      {
+        user_id,
+        route_id,
+        score: clamp(Number(score), 1, 5),
+        comment: comment || null,
+      },
+    ])
     .select("*")
     .single();
 
@@ -1991,6 +2191,6 @@ app.get("/api/sos/evidence/:alertId", requireAuth, async (req, res) => {
   res.json(data || []);
 });
 
-app.listen(port, '0.0.0.0', () => {
+app.listen(port, "0.0.0.0", () => {
   console.log(`Backend running on http://0.0.0.0:${port}`);
 });
