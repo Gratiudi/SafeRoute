@@ -6,6 +6,53 @@ let captureInterval: ReturnType<typeof setInterval> | null = null;
 let currentRecording: Audio.Recording | null = null;
 let captureSessionId = 0;
 
+const uploadRetryDelayMs = 3000;
+const uploadRetryAttempts = 3;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableUploadError(error: unknown) {
+  if (!error) return true;
+  if (error instanceof Error && error.name === "ApiError") {
+    return false;
+  }
+  return true;
+}
+
+async function uploadWithRetry(path: string, token: string, body: unknown, retries = uploadRetryAttempts) {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    try {
+      return await authedApiFetch(path, token, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetryableUploadError(error) || attempt === retries) {
+        break;
+      }
+
+      console.warn(
+        `[EvidenceCapture] Upload attempt ${attempt} failed. Retrying in ${uploadRetryDelayMs / 1000}s...`,
+        error instanceof Error ? error.message : error
+      );
+      await sleep(uploadRetryDelayMs);
+    }
+  }
+
+  console.warn(
+    `[EvidenceCapture] Upload failed after ${retries} attempts.`,
+    lastError instanceof Error ? lastError.message : lastError
+  );
+  throw lastError;
+}
+
 async function waitForFileToExist(localUri: string, attempts = 10, delayMs = 200) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const info = await FileSystem.getInfoAsync(localUri);
@@ -81,15 +128,11 @@ export const startEvidenceCapture = (alertId: string, token: string) => {
       const filePath = `evidence/${alertId}/audio_${Date.now()}.m4a`;
 
       // Upload to backend
-      await authedApiFetch("/api/sos/evidence", token, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          alert_id: alertId,
-          type: "Audio",
-          file_path: filePath,
-          file_base64: base64,
-        }),
+      await uploadWithRetry("/api/sos/evidence", token, {
+        alert_id: alertId,
+        type: "Audio",
+        file_path: filePath,
+        file_base64: base64,
       });
 
       console.log("[EvidenceCapture] Successfully uploaded audio evidence snippet.");
@@ -123,15 +166,11 @@ export const uploadPhotoEvidence = async (alertId: string, token: string, localU
 
     const filePath = `evidence/${alertId}/photo_${Date.now()}.jpg`;
 
-    await authedApiFetch("/api/sos/evidence", token, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        alert_id: alertId,
-        type: "Photo",
-        file_path: filePath,
-        file_base64: base64,
-      }),
+    await uploadWithRetry("/api/sos/evidence", token, {
+      alert_id: alertId,
+      type: "Photo",
+      file_path: filePath,
+      file_base64: base64,
     });
 
     console.log("[EvidenceCapture] Successfully uploaded photo evidence.");
