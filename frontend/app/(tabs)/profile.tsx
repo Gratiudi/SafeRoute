@@ -36,12 +36,6 @@ export default function ProfileScreen() {
   });
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
-  const [settings, setSettings] = useState({
-    notifications: true,
-    locationSharing: true,
-    emergencyAlerts: true,
-    safetyReminders: false,
-  });
   const [stats, setStats] = useState({ trips: 0, safeMiles: 0, alerts: 0, sosUsed: 0 });
   const [statsError, setStatsError] = useState<string | null>(null);
   const [alertsWithEvidence, setAlertsWithEvidence] = useState<AlertWithEvidence[]>([]);
@@ -377,25 +371,6 @@ export default function ProfileScreen() {
                 ))}
               </>
             )}
-          </View>
-
-          {/* Safety Settings */}
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Safety Settings</Text>
-            {[
-              { icon: 'notifications', color: '#7C3AED', title: 'Push Notifications', sub: 'Receive safety alerts', key: 'notifications' },
-              { icon: 'map', color: '#16A34A', title: 'Location Services', sub: 'Share your location', key: 'locationSharing' },
-              { icon: 'security', color: '#DC2626', title: 'Emergency Alerts', sub: 'Critical safety warnings', key: 'emergencyAlerts' },
-              { icon: 'lightbulb', color: '#F97316', title: 'Safety Reminders', sub: 'Periodic safety tips', key: 'safetyReminders' },
-            ].map(({ icon, color, title, sub, key }) => (
-              <View key={key} style={styles.settingRow}>
-                <View style={styles.settingLeft}>
-                  <MaterialIcons name={icon as any} size={20} color={color} />
-                  <View><Text style={styles.settingTitle}>{title}</Text><Text style={styles.settingSub}>{sub}</Text></View>
-                </View>
-                <Switch value={(settings as any)[key]} onValueChange={(v) => setSettings((prev) => ({ ...prev, [key]: v }))} />
-              </View>
-            ))}
           </View>
 
           {/* Localization */}
