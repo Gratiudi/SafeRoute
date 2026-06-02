@@ -93,7 +93,7 @@ export default function RegisterScreen() {
           <>
             <View style={styles.field}>
               <Text style={styles.label}>Full name</Text>
-              <TextInput value={fullName} onChangeText={setFullName} style={styles.input} />
+              <TextInput value={fullName} onChangeText={setFullName} placeholderTextColor="#94A3B8" style={[styles.input, { color: '#0F172A' }]} />
             </View>
 
             <View style={styles.field}>
@@ -103,18 +103,19 @@ export default function RegisterScreen() {
                 onChangeText={setEmail}
                 autoCapitalize="none"
                 keyboardType="email-address"
-                style={styles.input}
+                placeholderTextColor="#94A3B8"
+                style={[styles.input, { color: '#0F172A' }]}
               />
             </View>
 
             <View style={styles.field}>
               <Text style={styles.label}>Phone (required for OTP)</Text>
-              <TextInput placeholder="+251..." value={phoneNumber} onChangeText={setPhoneNumber} keyboardType="phone-pad" style={styles.input} />
+              <TextInput placeholder="+251..." value={phoneNumber} onChangeText={setPhoneNumber} keyboardType="phone-pad" placeholderTextColor="#94A3B8" style={[styles.input, { color: '#0F172A' }]} />
             </View>
 
             <View style={styles.field}>
               <Text style={styles.label}>Password</Text>
-              <TextInput value={password} onChangeText={setPassword} secureTextEntry style={styles.input} />
+              <TextInput value={password} onChangeText={setPassword} secureTextEntry placeholderTextColor="#94A3B8" style={[styles.input, { color: '#0F172A' }]} />
             </View>
 
             {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -130,7 +131,7 @@ export default function RegisterScreen() {
           <>
             <View style={styles.field}>
               <Text style={styles.label}>Enter 6-digit OTP</Text>
-              <TextInput value={otp} onChangeText={setOtp} keyboardType="number-pad" maxLength={6} style={styles.input} />
+              <TextInput value={otp} onChangeText={setOtp} keyboardType="number-pad" maxLength={6} placeholderTextColor="#94A3B8" style={[styles.input, { color: '#0F172A' }]} />
             </View>
 
             {error ? <Text style={styles.error}>{error}</Text> : null}

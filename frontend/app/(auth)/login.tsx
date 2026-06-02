@@ -96,7 +96,8 @@ export default function LoginScreen() {
                 autoCapitalize="none"
                 keyboardType="email-address"
                 placeholder="email@example.com or +251..."
-                style={styles.input}
+                placeholderTextColor="#94A3B8"
+                style={[styles.input, { color: '#0F172A' }]}
               />
             </View>
 
@@ -107,7 +108,7 @@ export default function LoginScreen() {
                   <Text style={styles.forgotText}>Forgot?</Text>
                 </Pressable>
               </View>
-              <TextInput value={password} onChangeText={setPassword} secureTextEntry style={styles.input} />
+              <TextInput value={password} onChangeText={setPassword} secureTextEntry placeholderTextColor="#94A3B8" style={[styles.input, { color: '#0F172A' }]} />
             </View>
 
             {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -123,7 +124,7 @@ export default function LoginScreen() {
           <>
             <View style={styles.field}>
               <Text style={styles.label}>Enter 6-digit OTP</Text>
-              <TextInput value={otp} onChangeText={setOtp} keyboardType="number-pad" maxLength={6} style={styles.input} />
+              <TextInput value={otp} onChangeText={setOtp} keyboardType="number-pad" maxLength={6} placeholderTextColor="#94A3B8" style={[styles.input, { color: '#0F172A' }]} />
             </View>
 
             {error ? <Text style={styles.error}>{error}</Text> : null}

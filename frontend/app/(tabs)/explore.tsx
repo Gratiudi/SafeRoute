@@ -272,7 +272,8 @@ export default function RoutesScreen() {
               // Clear GPS coords if user manually types
               if (startCoords) setStartCoords(null);
             }}
-            style={styles.input}
+            placeholderTextColor="#94A3B8"
+            style={[styles.input, { color: '#0F172A' }]}
           />
           <Pressable onPress={handleUseMyLocation} disabled={locating}>
             <MaterialIcons
@@ -290,7 +291,8 @@ export default function RoutesScreen() {
             value={destination}
             onChangeText={setDestination}
             onSubmitEditing={handleSearch}
-            style={styles.input}
+            placeholderTextColor="#94A3B8"
+            style={[styles.input, { color: '#0F172A' }]}
           />
         </View>
 
