@@ -152,6 +152,7 @@ export default function HomeScreen() {
     if (!token) return;
     void fetchAlertHistory();
     void fetchEmergencyContacts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const fetchEmergencyContacts = async () => {
@@ -197,6 +198,7 @@ export default function HomeScreen() {
       if (interval) clearInterval(interval);
       if (initialPhotoTimeout) clearTimeout(initialPhotoTimeout);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSosOpen]);
 
   useEffect(() => {
@@ -244,6 +246,7 @@ export default function HomeScreen() {
     }, 1000);
 
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediumExpiresAt]);
 
   const resetMediumState = () => {
@@ -282,6 +285,7 @@ export default function HomeScreen() {
       setSosCountdown((prev) => (prev !== null ? prev - 1 : null));
     }, 1000);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sosCountdown]);
 
   const handleStartSos = () => {
@@ -364,7 +368,8 @@ export default function HomeScreen() {
     });
 
     return unsubscribe;
-  }, [executeSos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleMediumStart = async () => {
     if (!token || mediumLoading) return;
@@ -487,7 +492,7 @@ export default function HomeScreen() {
       setActiveSosOpen(false);
       showStatus('SOS ended. Evidence saved.');
       void fetchAlertHistory();
-    } catch (error: any) {
+    } catch {
       showStatus('Failed to end SOS. Please try again.');
     }
   };

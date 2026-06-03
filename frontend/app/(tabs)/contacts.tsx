@@ -234,16 +234,6 @@ export default function ContactsScreen() {
               <MaterialIcons name="call" size={16} color="#94A3B8" />
               <Text style={styles.contactMeta}>{item.phone_number}</Text>
             </View>
-            <View style={styles.contactActions}>
-              <Pressable style={styles.actionPill}>
-                <MaterialIcons name="call" size={14} color="#FFFFFF" />
-                <Text style={styles.actionPillText}>Call</Text>
-              </Pressable>
-              <Pressable style={styles.actionPillOutline}>
-                <MaterialIcons name="message" size={14} color="#7C3AED" />
-                <Text style={styles.actionPillOutlineText}>Message</Text>
-              </Pressable>
-            </View>
           </View>
         </View>
       )}

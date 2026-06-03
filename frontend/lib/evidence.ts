@@ -2,10 +2,10 @@ import { authedApiFetch } from "./api";
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system/legacy";
 
-let captureInterval: ReturnType<typeof setInterval> | null = null;
+let isCapturing = false;
 let currentRecording: Audio.Recording | null = null;
-let captureSessionId = 0;
-async function waitForFileToExist(localUri: string, attempts = 10, delayMs = 200) {
+
+async function waitForFileToExist(localUri: string, attempts = 15, delayMs = 200) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const info = await FileSystem.getInfoAsync(localUri);
     if (info.exists) {
@@ -17,99 +17,96 @@ async function waitForFileToExist(localUri: string, attempts = 10, delayMs = 200
 }
 
 export const startEvidenceCapture = (alertId: string, token: string) => {
-  if (captureInterval) {
-    clearInterval(captureInterval);
-  }
-  captureSessionId += 1;
-  const sessionId = captureSessionId;
+  if (isCapturing) return;
+  isCapturing = true;
 
-  // Define a function to record and upload a snippet of audio
-  const recordAndUploadSnippet = async () => {
-    let recording: Audio.Recording | null = null;
-    try {
-      if (sessionId !== captureSessionId) return;
+  console.log("[EvidenceCapture] Started 30-second continuous audio evidence capture loop for alert", alertId);
 
-      console.log("[EvidenceCapture] Starting audio snippet recording...");
+  const loop = async () => {
+    while (isCapturing) {
+      let recording: Audio.Recording | null = null;
+      try {
+        console.log("[EvidenceCapture] Starting 30-second audio recording...");
+        
+        // Request permission
+        const { status } = await Audio.requestPermissionsAsync();
+        if (status !== "granted") {
+          console.warn("[EvidenceCapture] Microphone permission not granted.");
+          // Wait a bit before retrying so we don't spin endlessly if permissions are permanently denied
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          continue;
+        }
 
-      // Request permission
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== "granted") {
-        console.warn("[EvidenceCapture] Microphone permission not granted.");
-        return;
-      }
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+        });
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
+        recording = new Audio.Recording();
+        currentRecording = recording;
+        
+        await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+        await recording.startAsync();
 
-      recording = new Audio.Recording();
-      currentRecording = recording;
+        // Record for 30 seconds, checking every second if we should stop
+        for (let i = 0; i < 30; i++) {
+          if (!isCapturing) break;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
 
-      await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      await recording.startAsync();
+        if (!isCapturing) {
+           break; // Stop loop if we're no longer capturing
+        }
 
-      // Record for 5 seconds
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+        await recording.stopAndUnloadAsync();
+        const localUri = recording.getURI();
 
-      if (sessionId !== captureSessionId || currentRecording !== recording) {
-        return;
-      }
+        if (!localUri) {
+          console.warn("[EvidenceCapture] Failed to get recording local URI.");
+          continue;
+        }
 
-      await recording.stopAndUnloadAsync();
-      const localUri = recording.getURI();
+        const fileExists = await waitForFileToExist(localUri);
+        if (!fileExists) {
+          console.warn("[EvidenceCapture] Audio file not found after waiting:", localUri);
+          continue;
+        }
 
-      if (!localUri) {
-        console.warn("[EvidenceCapture] Failed to get recording local URI.");
-        return;
-      }
+        console.log("[EvidenceCapture] Audio recorded at:", localUri);
 
-      console.log("[EvidenceCapture] Audio recorded at:", localUri);
+        // Read file as base64
+        const base64 = await FileSystem.readAsStringAsync(localUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
 
-      const fileExists = await waitForFileToExist(localUri);
-      if (!fileExists) {
-        console.warn("[EvidenceCapture] Audio file not found after recording:", localUri);
-        return;
-      }
+        const filePath = `evidence/${alertId}/audio_${Date.now()}.m4a`;
 
-      // Read file as base64
-      const base64 = await FileSystem.readAsStringAsync(localUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+        // Upload to backend
+        await authedApiFetch("/api/sos/evidence", token, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            alert_id: alertId,
+            type: "Audio",
+            file_path: filePath,
+            file_base64: base64,
+          }),
+        });
 
-      const filePath = `evidence/${alertId}/audio_${Date.now()}.m4a`;
-
-      // Upload to backend
-      await authedApiFetch("/api/sos/evidence", token, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          alert_id: alertId,
-          type: "Audio",
-          file_path: filePath,
-          file_base64: base64,
-        }),
-      });
-
-      console.log("[EvidenceCapture] Successfully uploaded audio evidence snippet.");
-    } catch (e) {
-      console.error("[EvidenceCapture] Audio snippet record/upload failed:", e);
-    } finally {
-      if (recording && currentRecording === recording) {
-        currentRecording = null;
+        console.log("[EvidenceCapture] Successfully uploaded audio evidence snippet.");
+      } catch (e) {
+        console.error("[EvidenceCapture] Audio snippet record/upload failed:", e);
+        // Wait a little before retrying on failure
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      } finally {
+        if (recording && currentRecording === recording) {
+          currentRecording = null;
+        }
       }
     }
   };
 
-  // Perform an initial capture immediately
-  void recordAndUploadSnippet();
-
-  // Then record every 30 seconds
-  captureInterval = setInterval(() => {
-    void recordAndUploadSnippet();
-  }, 30000);
-
-  console.log("[EvidenceCapture] Started audio evidence capture loop for alert", alertId);
+  void loop();
 };
 
 export const uploadPhotoEvidence = async (alertId: string, token: string, localUri: string) => {
@@ -140,12 +137,7 @@ export const uploadPhotoEvidence = async (alertId: string, token: string, localU
 };
 
 export const stopEvidenceCapture = async () => {
-  captureSessionId += 1;
-
-  if (captureInterval) {
-    clearInterval(captureInterval);
-    captureInterval = null;
-  }
+  isCapturing = false;
 
   if (currentRecording) {
     try {

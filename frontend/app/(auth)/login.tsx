@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Link, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/lib/auth';
 
 export default function LoginScreen() {
@@ -70,9 +70,6 @@ export default function LoginScreen() {
         <View style={styles.field}>
           <View style={styles.passwordRow}>
             <Text style={styles.label}>Password</Text>
-            <Pressable>
-              <Text style={styles.forgotText}>Forgot?</Text>
-            </Pressable>
           </View>
           <TextInput value={password} onChangeText={setPassword} secureTextEntry placeholderTextColor="#94A3B8" style={[styles.input, { color: '#0F172A' }]} />
         </View>
@@ -95,7 +92,7 @@ export default function LoginScreen() {
       </View>
 
       <Text style={styles.footerText}>
-        Don't have an account?{' '}
+        Don&apos;t have an account?{' '}
         <Text style={styles.linkText} onPress={() => router.push('/(auth)/register')}>
           Create Account
         </Text>

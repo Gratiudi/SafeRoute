@@ -154,7 +154,7 @@ export default function RoutesScreen() {
             activeStartText = "Addis Ababa";
             setStart("Addis Ababa");
           }
-        } catch (err) {
+        } catch {
           // Fallback if location services are disabled or fail
           activeStartText = "Addis Ababa";
           setStart("Addis Ababa");
