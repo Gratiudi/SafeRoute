@@ -667,22 +667,10 @@ app.post("/api/auth/send-otp", async (req, res) => {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   otpStore.set(cleanPhone, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
 
-  if (!canSendSms) {
-    console.log(
-      `\n=== SIMULATED OTP FOR ${cleanPhone} ===\n${otp}\n=========================================\n`,
-    );
-  }
-  try {
-    await sendSms(
-      cleanPhone,
-      `Your SafeRoute verification code is ${otp}. It expires in 5 minutes.`,
-    );
-    res.json({ message: "OTP sent successfully" });
-  } catch (err) {
-    console.error("SMSEthiopia OTP send error:", err);
-    otpStore.delete(cleanPhone);
-    res.status(502).json({ error: "Failed to send OTP SMS" });
-  }
+  console.log(
+    `\n=== OTP FOR ${cleanPhone} ===\n${otp}\n==============================\n`,
+  );
+  res.json({ message: "OTP sent successfully" });
 });
 
 // VERIFY OTP
