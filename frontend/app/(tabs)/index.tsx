@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/lib/auth';
 import { authedApiFetch } from '@/lib/api';
 import { startEvidenceCapture, stopEvidenceCapture, uploadPhotoEvidence } from '@/lib/evidence';
@@ -21,6 +21,7 @@ export default function HomeScreen() {
   const { user, token } = useAuth();
   const { t, formatTimestamp } = useI18n();
   const router = useRouter();
+  const { triggerSos } = useLocalSearchParams<{ triggerSos?: string }>();
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [mediumOpen, setMediumOpen] = useState(false);
   const [sosLoading, setSosLoading] = useState(false);
@@ -92,11 +93,20 @@ export default function HomeScreen() {
   const captureAndUploadPhoto = async () => {
     const aid = activeSosAlertIdRef.current;
     const tok = tokenRef.current;
-    if (!cameraRef.current || !aid || !tok) {
-      console.log("[HomeScreen] Cannot capture photo: camera ref, alert ID, or token missing.");
+    if (!aid || !tok) {
+      console.log("[HomeScreen] Cannot capture photo: alert ID or token missing.");
       return;
     }
     try {
+      let attempts = 0;
+      while (!cameraRef.current && attempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        attempts += 1;
+      }
+      if (!cameraRef.current) {
+        console.log("[HomeScreen] Cannot capture photo: camera ref not ready.");
+        return;
+      }
       console.log("[HomeScreen] Capturing photo evidence...");
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.5,
@@ -130,31 +140,13 @@ export default function HomeScreen() {
     }
   };
 
-  // Active SOS timer and evidence capture cycle
+  // Active SOS timer
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
-    let initialPhotoTimeout: ReturnType<typeof setTimeout> | null = null;
 
     if (activeSosOpen) {
-      // Evidence capture cycle:
-      // - startEvidenceCapture() records 30-second audio snippets in a loop
-      // - captureAndUploadPhoto() captures photos at synchronized intervals
-      // Timeline: Photo at 1.5s (warmup), then every 30s (T=30s, 60s, 90s, etc.)
-      // Result: Photo → 30s Audio → Photo → 30s Audio → Photo (repeats until SOS ends)
-      
-      // Warm up camera and capture initial photo after 1.5 seconds
-      initialPhotoTimeout = setTimeout(() => {
-        void captureAndUploadPhoto();
-      }, 1500);
-
       interval = setInterval(() => {
-        setActiveSosDuration((prev) => {
-          const next = prev + 1;
-          if (next > 0 && next % 30 === 0) {
-            void captureAndUploadPhoto();
-          }
-          return next;
-        });
+        setActiveSosDuration((prev) => prev + 1);
       }, 1000);
     } else {
       setActiveSosDuration(0);
@@ -162,7 +154,6 @@ export default function HomeScreen() {
 
     return () => {
       if (interval) clearInterval(interval);
-      if (initialPhotoTimeout) clearTimeout(initialPhotoTimeout);
     };
   }, [activeSosOpen]);
 
@@ -255,6 +246,13 @@ export default function HomeScreen() {
     setSosCountdown(5);
   };
 
+  useEffect(() => {
+    if (triggerSos !== '1') return;
+    setEmergencyOpen(true);
+    setSosCountdown(5);
+    router.replace('/(tabs)');
+  }, [triggerSos, router]);
+
   const cancelSosCountdown = () => {
     setSosCountdown(null);
     setEmergencyOpen(false);
@@ -301,11 +299,14 @@ export default function HomeScreen() {
       }
       showStatus('SOS alert created.');
       
-      // Start capturing evidence for this SOS alert
-      startEvidenceCapture(result.alert.alert_id, token);
+      setActiveSosOpen(true);
       setActiveSosAlertId(result.alert.alert_id);
       setActiveSosShareCode(result.share?.share_code ?? null);
-      setActiveSosOpen(true);
+
+      // Start sequential evidence capture: photo -> 30s audio -> photo -> upload -> repeat
+      startEvidenceCapture(result.alert.alert_id, token, {
+        capturePhoto: captureAndUploadPhoto,
+      });
 
       void fetchAlertHistory();
       setEmergencyOpen(false);
@@ -391,10 +392,12 @@ export default function HomeScreen() {
         body: JSON.stringify({ alert_id: mediumAlertId, ...locationPayload }),
       });
       if (result && result.sos_alert) {
-         startEvidenceCapture(result.sos_alert.alert_id, token);
+         setActiveSosOpen(true);
          setActiveSosAlertId(result.sos_alert.alert_id);
          setActiveSosShareCode(result.share?.share_code ?? null);
-         setActiveSosOpen(true);
+         startEvidenceCapture(result.sos_alert.alert_id, token, {
+           capturePhoto: captureAndUploadPhoto,
+         });
       }
 
       resetMediumState();
@@ -513,7 +516,7 @@ export default function HomeScreen() {
             <View key={item.alert_id} style={styles.historyRow}>
               <Text style={styles.historyType}>{item.type}</Text>
               <Text style={styles.historyMeta}>
-                {item.status} • {formatTimestamp(item.created_at)}
+                {item.status} • {formatTimestamp(item.timestamp ?? item.created_at)}
               </Text>
             </View>
           ))

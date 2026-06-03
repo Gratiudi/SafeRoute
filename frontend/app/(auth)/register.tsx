@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Link, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/lib/auth';
 import { apiFetch } from '@/lib/api';
 import * as Location from 'expo-location';
@@ -371,6 +371,44 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     backgroundColor: '#FFFFFF',
     color: '#0F172A',
+  },
+  strengthContainer: {
+    marginTop: 10,
+    gap: 6,
+  },
+  strengthBar: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: '#E2E8F0',
+    overflow: 'hidden',
+  },
+  strengthFill: {
+    height: '100%',
+    borderRadius: 999,
+  },
+  strengthText: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+  requirementsContainer: {
+    marginTop: 10,
+    gap: 6,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  requirementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  requirementText: {
+    fontSize: 12,
+    color: '#475569',
+    flex: 1,
   },
   primaryButton: {
     alignItems: 'center',

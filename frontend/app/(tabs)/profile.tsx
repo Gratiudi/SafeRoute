@@ -20,7 +20,7 @@ type AlertWithEvidence = {
   alert_id: string;
   type: string;
   status: string;
-  created_at: string;
+  timestamp: string;
   evidence: EvidenceItem[];
 };
 
@@ -276,10 +276,17 @@ export default function ProfileScreen() {
     }
   };
 
-  const formatDate = (iso: string) => {
-    try {
-      return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-    } catch { return iso; }
+  const formatDate = (iso?: string) => {
+    if (!iso) return 'Unknown time';
+    const parsed = new Date(iso);
+    if (Number.isNaN(parsed.getTime())) return 'Unknown time';
+    return parsed.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   const audioCount = (items: EvidenceItem[]) => items.filter((i) => i.type === 'Audio').length;
@@ -485,7 +492,7 @@ export default function ProfileScreen() {
                     </View>
                     <View>
                       <Text style={styles.evidenceAlertType}>{alert.type} Alert</Text>
-                      <Text style={styles.evidenceAlertMeta}>{formatDate(alert.created_at)}</Text>
+                      <Text style={styles.evidenceAlertMeta}>{formatDate(alert.timestamp ?? (alert as any).created_at)}</Text>
                     </View>
                   </View>
                   <View style={styles.evidenceRightRow}>
@@ -550,7 +557,7 @@ export default function ProfileScreen() {
                               }
                             </Text>
                           </Pressable>
-                          <Text style={styles.evidenceTimestamp}>{new Date(item.timestamp).toLocaleTimeString()}</Text>
+                          <Text style={styles.evidenceTimestamp}>{formatDate(item.timestamp)}</Text>
                         </View>
                       ))
                     )}

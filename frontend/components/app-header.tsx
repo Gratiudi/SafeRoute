@@ -165,7 +165,13 @@ export function AppHeader({ title }: AppHeaderProps) {
                 <Text style={styles.modalButtonGhostText}>Cancel</Text>
               </Pressable>
               <Pressable
-                onPress={() => setEmergencyOpen(false)}
+                onPress={() => {
+                  setEmergencyOpen(false);
+                  router.push({
+                    pathname: "/(tabs)",
+                    params: { triggerSos: "1" },
+                  } as any);
+                }}
                 style={styles.modalButtonDanger}
               >
                 <Text style={styles.modalButtonDangerText}>Start SOS</Text>

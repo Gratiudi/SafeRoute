@@ -2,9 +2,9 @@ import { authedApiFetch } from "./api";
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system/legacy";
 
-let captureInterval: ReturnType<typeof setInterval> | null = null;
 let currentRecording: Audio.Recording | null = null;
 let captureSessionId = 0;
+let captureCycleInProgress = false;
 
 const uploadRetryDelayMs = 3000;
 const uploadRetryAttempts = 3;
@@ -53,112 +53,124 @@ async function uploadWithRetry(path: string, token: string, body: unknown, retri
   throw lastError;
 }
 
-async function waitForFileToExist(localUri: string, attempts = 10, delayMs = 200) {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const info = await FileSystem.getInfoAsync(localUri);
-    if (info.exists) {
-      return true;
+async function readFileBase64WithRetry(localUri: string, attempts = 10, delayMs = 250) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await FileSystem.readAsStringAsync(localUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(delayMs);
+      }
     }
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
-  return false;
+  throw lastError;
 }
 
-export const startEvidenceCapture = (alertId: string, token: string) => {
-  if (captureInterval) {
-    clearInterval(captureInterval);
-  }
-  captureSessionId += 1;
-  const sessionId = captureSessionId;
+type EvidenceCaptureOptions = {
+  capturePhoto?: () => Promise<void>;
+};
 
-  // Define a function to capture one cycle: photo + 30 seconds of audio + photo
-  const captureCycle = async () => {
+export const startEvidenceCapture = (alertId: string, token: string, options: EvidenceCaptureOptions = {}) => {
+  captureSessionId += 1;
+  captureCycleInProgress = false;
+  const sessionId = captureSessionId;
+  const capturePhoto = options.capturePhoto;
+
+  const runCaptureLoop = async () => {
     let recording: Audio.Recording | null = null;
     try {
       if (sessionId !== captureSessionId) return;
+      if (captureCycleInProgress) {
+        console.log("[EvidenceCapture] Skipping cycle because previous cycle is still running.");
+        return;
+      }
+      if (currentRecording) {
+        console.log("[EvidenceCapture] Skipping cycle because recording is already active.");
+        return;
+      }
+      captureCycleInProgress = true;
 
       console.log("[EvidenceCapture] Starting evidence capture cycle...");
-      
-      // Step 1: Request permissions
+
       const audioStatus = await Audio.requestPermissionsAsync();
       if (audioStatus.status !== "granted") {
         console.warn("[EvidenceCapture] Microphone permission not granted.");
         return;
       }
 
-      // Note: Photo capture is handled by the HomeScreen component
-      // which manages the camera independently. This function handles audio.
-
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
       });
 
-      console.log("[EvidenceCapture] Starting 30-second audio recording...");
-      recording = new Audio.Recording();
-      currentRecording = recording;
-      
-      await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      await recording.startAsync();
-
-      // Record for 30 seconds
-      await new Promise((resolve) => setTimeout(resolve, 30000));
-
-      if (sessionId !== captureSessionId || currentRecording !== recording) {
-        return;
+      if (capturePhoto && sessionId === captureSessionId) {
+        await capturePhoto();
       }
 
-      console.log("[EvidenceCapture] 30-second recording complete. Stopping and uploading...");
-      await recording.stopAndUnloadAsync();
-      const localUri = recording.getURI();
+      while (sessionId === captureSessionId) {
+        console.log("[EvidenceCapture] Starting 30-second audio recording...");
+        recording = new Audio.Recording();
+        currentRecording = recording;
 
-      if (!localUri) {
-        console.warn("[EvidenceCapture] Failed to get recording local URI.");
-        return;
+        await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+        await recording.startAsync();
+
+        await sleep(30000);
+
+        if (sessionId !== captureSessionId || currentRecording !== recording) {
+          try {
+            await recording.stopAndUnloadAsync();
+          } catch {
+            // Ignore cleanup failures when session changed mid-cycle.
+          }
+          return;
+        }
+
+        console.log("[EvidenceCapture] 30-second recording complete. Stopping and uploading...");
+        await recording.stopAndUnloadAsync();
+        currentRecording = null;
+        const localUri = recording.getURI();
+
+        if (!localUri) {
+          console.warn("[EvidenceCapture] Failed to get recording local URI.");
+          continue;
+        }
+
+        console.log("[EvidenceCapture] Audio recorded at:", localUri);
+
+        if (capturePhoto && sessionId === captureSessionId) {
+          await capturePhoto();
+        }
+
+        const base64 = await readFileBase64WithRetry(localUri);
+
+        const filePath = `evidence/${alertId}/audio_${Date.now()}.m4a`;
+
+        await uploadWithRetry("/api/sos/evidence", token, {
+          alert_id: alertId,
+          type: "Audio",
+          file_path: filePath,
+          file_base64: base64,
+        });
+
+        console.log("[EvidenceCapture] Successfully uploaded 30-second audio evidence.");
       }
-
-      console.log("[EvidenceCapture] Audio recorded at:", localUri);
-
-      const fileExists = await waitForFileToExist(localUri);
-      if (!fileExists) {
-        console.warn("[EvidenceCapture] Audio file not found after recording:", localUri);
-        return;
-      }
-
-      // Read file as base64
-      const base64 = await FileSystem.readAsStringAsync(localUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      const filePath = `evidence/${alertId}/audio_${Date.now()}.m4a`;
-
-      // Upload to backend
-      await uploadWithRetry("/api/sos/evidence", token, {
-        alert_id: alertId,
-        type: "Audio",
-        file_path: filePath,
-        file_base64: base64,
-      });
-
-      console.log("[EvidenceCapture] Successfully uploaded 30-second audio evidence.");
     } catch (e) {
       console.error("[EvidenceCapture] Audio record/upload failed:", e);
     } finally {
       if (recording && currentRecording === recording) {
         currentRecording = null;
       }
+      captureCycleInProgress = false;
     }
   };
 
-  // Perform initial capture cycle immediately
-  void captureCycle();
-
-  // Then repeat every 30 seconds (photo capture is handled by HomeScreen timer)
-  captureInterval = setInterval(() => {
-    void captureCycle();
-  }, 30000);
-
-  console.log("[EvidenceCapture] Started evidence capture loop (30s audio + photo cycle) for alert", alertId);
+  void runCaptureLoop();
+  console.log("[EvidenceCapture] Started sequential evidence capture loop for alert", alertId);
 };
 
 export const uploadPhotoEvidence = async (alertId: string, token: string, localUri: string) => {
@@ -186,11 +198,7 @@ export const uploadPhotoEvidence = async (alertId: string, token: string, localU
 
 export const stopEvidenceCapture = async () => {
   captureSessionId += 1;
-
-  if (captureInterval) {
-    clearInterval(captureInterval);
-    captureInterval = null;
-  }
+  captureCycleInProgress = false;
 
   if (currentRecording) {
     try {
