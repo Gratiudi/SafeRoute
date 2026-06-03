@@ -23,7 +23,7 @@ const SMS_PROVIDER = (process.env.SMS_PROVIDER || "auto").toLowerCase();
 const SMSETHIOPIA_API_KEY = process.env.SMSETHIOPIA_API_KEY;
 const SMSETHIOPIA_API_URL =
   process.env.SMSETHIOPIA_API_URL || "https://smsethiopia.com/api/sms/send";
-const EVIDENCE_BUCKET = process.env.SUPABASE_EVIDENCE_BUCKET || "evidence";
+const EVIDENCE_BUCKET = "emergency-evidence";
 const canSendSms =
   typeof SMSETHIOPIA_API_KEY === "string" &&
   SMSETHIOPIA_API_KEY.length > 0 &&

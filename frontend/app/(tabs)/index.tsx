@@ -9,6 +9,7 @@ import { useI18n } from '@/lib/i18n';
 import * as Location from 'expo-location';
 import { Audio } from 'expo-av';
 import { Camera, CameraView } from 'expo-camera';
+import { onSosStart } from '@/lib/sosEvents';
 
 type EmergencyContact = {
   contact_id: string;
@@ -357,6 +358,14 @@ export default function HomeScreen() {
     }
   };
 
+  useEffect(() => {
+    const unsubscribe = onSosStart(() => {
+      void executeSos();
+    });
+
+    return unsubscribe;
+  }, [executeSos]);
+
   const handleMediumStart = async () => {
     if (!token || mediumLoading) return;
     setMediumError(null);
@@ -556,8 +565,7 @@ export default function HomeScreen() {
           alerts.slice(0, 5).map((item) => (
             <View key={item.alert_id} style={styles.historyRow}>
               <Text style={styles.historyType}>{item.type}</Text>
-              <Text style={styles.historyMeta}>
-                {item.status} • {formatTimestamp(item.timestamp ?? item.created_at)}
+              <Text style={styles.historyMeta}>                {item.status} • {formatTimestamp(item.timestamp ?? item.created_at)}
               </Text>
             </View>
           ))
@@ -1226,3 +1234,4 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 });
+

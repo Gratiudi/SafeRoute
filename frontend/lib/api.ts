@@ -2,10 +2,8 @@ import { Platform } from 'react-native';
 import { emitAuthExpired } from '@/lib/authEvents';
 
 function defaultBaseUrl() {
-  // Web runs on your PC, so localhost works.
   if (Platform.OS === 'web') return 'http://localhost:4000';
-  // ⚠️ 10.0.2.2 is EMULATOR only. Real phone needs EXPO_PUBLIC_API_BASE_URL set.
-  if (Platform.OS === 'android') return 'http://10.0.2.2:4000';
+  if (Platform.OS === 'android') return 'http://192.168.1.6:4000';
   return 'http://localhost:4000';
 }
 
@@ -56,4 +54,3 @@ export async function authedApiFetch(path: string, token: string, init?: Request
     throw error;
   }
 }
-
