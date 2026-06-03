@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/lib/auth';
@@ -50,6 +50,8 @@ export default function HomeScreen() {
   const [activeSosDuration, setActiveSosDuration] = useState(0);
 
   const cameraRef = useRef<any>(null);
+  const cameraReadyRef = useRef(false);
+  const photoCaptureInProgressRef = useRef(false);
   const activeSosAlertIdRef = useRef<string | null>(null);
   const activeSosShareCodeRef = useRef<string | null>(null);
   const tokenRef = useRef<string | null>(null);
@@ -90,34 +92,58 @@ export default function HomeScreen() {
     }
   };
 
+  const waitForCameraReady = async (maxAttempts = 40, delayMs = 150) => {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      if (cameraRef.current && cameraReadyRef.current) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    return false;
+  };
+
   const captureAndUploadPhoto = async () => {
+    if (photoCaptureInProgressRef.current) {
+      console.log("[HomeScreen] Skipping photo capture because another capture is in progress.");
+      return;
+    }
+
     const aid = activeSosAlertIdRef.current;
     const tok = tokenRef.current;
     if (!aid || !tok) {
       console.log("[HomeScreen] Cannot capture photo: alert ID or token missing.");
       return;
     }
+
+    photoCaptureInProgressRef.current = true;
     try {
-      let attempts = 0;
-      while (!cameraRef.current && attempts < 20) {
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        attempts += 1;
-      }
-      if (!cameraRef.current) {
-        console.log("[HomeScreen] Cannot capture photo: camera ref not ready.");
+      const ready = await waitForCameraReady();
+      if (!ready || !cameraRef.current) {
+        console.warn("[HomeScreen] Camera not ready for photo capture.");
         return;
       }
+
       console.log("[HomeScreen] Capturing photo evidence...");
-      const photo = await cameraRef.current.takePictureAsync({
+      const capturePromise = cameraRef.current.takePictureAsync({
         quality: 0.5,
-        skipProcessing: true,
+        skipProcessing: Platform.OS !== 'android',
       });
-      if (photo && photo.uri) {
-        console.log("[HomeScreen] Photo captured. Uploading from uri:", photo.uri);
-        await uploadPhotoEvidence(aid, tok, photo.uri);
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 15000);
+      });
+      const photo = await Promise.race([capturePromise, timeoutPromise]);
+
+      if (!photo || !photo.uri) {
+        console.warn("[HomeScreen] Photo capture returned no image URI.");
+        return;
       }
+
+      console.log("[HomeScreen] Photo captured. Uploading from uri:", photo.uri);
+      await uploadPhotoEvidence(aid, tok, photo.uri);
     } catch (err) {
       console.error("[HomeScreen] Photo capture/upload failed:", err);
+    } finally {
+      photoCaptureInProgressRef.current = false;
     }
   };
 
@@ -140,20 +166,35 @@ export default function HomeScreen() {
     }
   };
 
-  // Active SOS timer
+  // Active SOS timer and evidence capture cycle
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
+    let initialPhotoTimeout: ReturnType<typeof setTimeout> | null = null;
 
     if (activeSosOpen) {
+      cameraReadyRef.current = false;
+      // Warm up camera and capture initial photo after camera has time to mount
+      initialPhotoTimeout = setTimeout(() => {
+        void captureAndUploadPhoto();
+      }, 2500);
+
       interval = setInterval(() => {
-        setActiveSosDuration((prev) => prev + 1);
+        setActiveSosDuration((prev) => {
+          const next = prev + 1;
+          if (next > 0 && next % 30 === 0) {
+            void captureAndUploadPhoto();
+          }
+          return next;
+        });
       }, 1000);
     } else {
+      cameraReadyRef.current = false;
       setActiveSosDuration(0);
     }
 
     return () => {
       if (interval) clearInterval(interval);
+      if (initialPhotoTimeout) clearTimeout(initialPhotoTimeout);
     };
   }, [activeSosOpen]);
 
@@ -299,14 +340,13 @@ export default function HomeScreen() {
       }
       showStatus('SOS alert created.');
       
-      setActiveSosOpen(true);
       setActiveSosAlertId(result.alert.alert_id);
+      activeSosAlertIdRef.current = result.alert.alert_id;
       setActiveSosShareCode(result.share?.share_code ?? null);
-
-      // Start sequential evidence capture: photo -> 30s audio -> photo -> upload -> repeat
-      startEvidenceCapture(result.alert.alert_id, token, {
-        capturePhoto: captureAndUploadPhoto,
-      });
+      activeSosShareCodeRef.current = result.share?.share_code ?? null;
+      tokenRef.current = token;
+      setActiveSosOpen(true);
+      startEvidenceCapture(result.alert.alert_id, token);
 
       void fetchAlertHistory();
       setEmergencyOpen(false);
@@ -392,12 +432,13 @@ export default function HomeScreen() {
         body: JSON.stringify({ alert_id: mediumAlertId, ...locationPayload }),
       });
       if (result && result.sos_alert) {
-         setActiveSosOpen(true);
          setActiveSosAlertId(result.sos_alert.alert_id);
+         activeSosAlertIdRef.current = result.sos_alert.alert_id;
          setActiveSosShareCode(result.share?.share_code ?? null);
-         startEvidenceCapture(result.sos_alert.alert_id, token, {
-           capturePhoto: captureAndUploadPhoto,
-         });
+         activeSosShareCodeRef.current = result.share?.share_code ?? null;
+         tokenRef.current = token;
+         setActiveSosOpen(true);
+         startEvidenceCapture(result.sos_alert.alert_id, token);
       }
 
       resetMediumState();
@@ -676,9 +717,12 @@ export default function HomeScreen() {
             {activeSosOpen && (
               <CameraView
                 ref={cameraRef}
-                style={{ width: 1, height: 1, opacity: 0, position: 'absolute' }}
+                style={styles.hiddenCamera}
                 facing="back"
                 mode="picture"
+                onCameraReady={() => {
+                  cameraReadyRef.current = true;
+                }}
               />
             )}
             <View style={styles.sosHeader}>
@@ -1017,6 +1061,14 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 16,
     paddingVertical: 20,
+  },
+  hiddenCamera: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    left: -140,
+    top: 0,
+    opacity: 0.01,
   },
   sosHeader: {
     alignItems: 'center',

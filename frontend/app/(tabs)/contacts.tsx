@@ -70,9 +70,9 @@ export default function ContactsScreen() {
       return;
     }
 
-    const phoneRegex = /^\+[1-9]\d{1,14}$/;
+    const phoneRegex = /^\+2519\d{8}$/;
     if (!phoneRegex.test(phone.trim())) {
-      Alert.alert("Invalid phone", "Must be E.164 format (e.g., +251...)");
+      Alert.alert("Invalid phone", "Must start with +2519 and include 8 more digits (e.g., +251912345678).");
       return;
     }
 

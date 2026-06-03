@@ -2,102 +2,38 @@ import { authedApiFetch } from "./api";
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system/legacy";
 
+let captureInterval: ReturnType<typeof setInterval> | null = null;
 let currentRecording: Audio.Recording | null = null;
 let captureSessionId = 0;
-let captureCycleInProgress = false;
-
-const uploadRetryDelayMs = 3000;
-const uploadRetryAttempts = 3;
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isRetryableUploadError(error: unknown) {
-  if (!error) return true;
-  if (error instanceof Error && error.name === "ApiError") {
-    return false;
-  }
-  return true;
-}
-
-async function uploadWithRetry(path: string, token: string, body: unknown, retries = uploadRetryAttempts) {
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= retries; attempt += 1) {
-    try {
-      return await authedApiFetch(path, token, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch (error) {
-      lastError = error;
-
-      if (!isRetryableUploadError(error) || attempt === retries) {
-        break;
-      }
-
-      console.warn(
-        `[EvidenceCapture] Upload attempt ${attempt} failed. Retrying in ${uploadRetryDelayMs / 1000}s...`,
-        error instanceof Error ? error.message : error
-      );
-      await sleep(uploadRetryDelayMs);
+async function waitForFileToExist(localUri: string, attempts = 10, delayMs = 200) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const info = await FileSystem.getInfoAsync(localUri);
+    if (info.exists) {
+      return true;
     }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
-
-  console.warn(
-    `[EvidenceCapture] Upload failed after ${retries} attempts.`,
-    lastError instanceof Error ? lastError.message : lastError
-  );
-  throw lastError;
+  return false;
 }
 
-async function readFileBase64WithRetry(localUri: string, attempts = 10, delayMs = 250) {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      return await FileSystem.readAsStringAsync(localUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-    } catch (error) {
-      lastError = error;
-      if (attempt < attempts) {
-        await sleep(delayMs);
-      }
-    }
+export const startEvidenceCapture = (alertId: string, token: string) => {
+  if (captureInterval) {
+    clearInterval(captureInterval);
   }
-  throw lastError;
-}
-
-type EvidenceCaptureOptions = {
-  capturePhoto?: () => Promise<void>;
-};
-
-export const startEvidenceCapture = (alertId: string, token: string, options: EvidenceCaptureOptions = {}) => {
   captureSessionId += 1;
-  captureCycleInProgress = false;
   const sessionId = captureSessionId;
-  const capturePhoto = options.capturePhoto;
 
-  const runCaptureLoop = async () => {
+  // Define a function to record and upload a snippet of audio
+  const recordAndUploadSnippet = async () => {
     let recording: Audio.Recording | null = null;
     try {
       if (sessionId !== captureSessionId) return;
-      if (captureCycleInProgress) {
-        console.log("[EvidenceCapture] Skipping cycle because previous cycle is still running.");
-        return;
-      }
-      if (currentRecording) {
-        console.log("[EvidenceCapture] Skipping cycle because recording is already active.");
-        return;
-      }
-      captureCycleInProgress = true;
 
-      console.log("[EvidenceCapture] Starting evidence capture cycle...");
+      console.log("[EvidenceCapture] Starting audio snippet recording...");
 
-      const audioStatus = await Audio.requestPermissionsAsync();
-      if (audioStatus.status !== "granted") {
+      // Request permission
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== "granted") {
         console.warn("[EvidenceCapture] Microphone permission not granted.");
         return;
       }
@@ -107,70 +43,73 @@ export const startEvidenceCapture = (alertId: string, token: string, options: Ev
         playsInSilentModeIOS: true,
       });
 
-      if (capturePhoto && sessionId === captureSessionId) {
-        await capturePhoto();
+      recording = new Audio.Recording();
+      currentRecording = recording;
+
+      await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await recording.startAsync();
+
+      // Record for 5 seconds
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+
+      if (sessionId !== captureSessionId || currentRecording !== recording) {
+        return;
       }
 
-      while (sessionId === captureSessionId) {
-        console.log("[EvidenceCapture] Starting 30-second audio recording...");
-        recording = new Audio.Recording();
-        currentRecording = recording;
+      await recording.stopAndUnloadAsync();
+      const localUri = recording.getURI();
 
-        await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-        await recording.startAsync();
+      if (!localUri) {
+        console.warn("[EvidenceCapture] Failed to get recording local URI.");
+        return;
+      }
 
-        await sleep(30000);
+      console.log("[EvidenceCapture] Audio recorded at:", localUri);
 
-        if (sessionId !== captureSessionId || currentRecording !== recording) {
-          try {
-            await recording.stopAndUnloadAsync();
-          } catch {
-            // Ignore cleanup failures when session changed mid-cycle.
-          }
-          return;
-        }
+      const fileExists = await waitForFileToExist(localUri);
+      if (!fileExists) {
+        console.warn("[EvidenceCapture] Audio file not found after recording:", localUri);
+        return;
+      }
 
-        console.log("[EvidenceCapture] 30-second recording complete. Stopping and uploading...");
-        await recording.stopAndUnloadAsync();
-        currentRecording = null;
-        const localUri = recording.getURI();
+      // Read file as base64
+      const base64 = await FileSystem.readAsStringAsync(localUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
 
-        if (!localUri) {
-          console.warn("[EvidenceCapture] Failed to get recording local URI.");
-          continue;
-        }
+      const filePath = `evidence/${alertId}/audio_${Date.now()}.m4a`;
 
-        console.log("[EvidenceCapture] Audio recorded at:", localUri);
-
-        if (capturePhoto && sessionId === captureSessionId) {
-          await capturePhoto();
-        }
-
-        const base64 = await readFileBase64WithRetry(localUri);
-
-        const filePath = `evidence/${alertId}/audio_${Date.now()}.m4a`;
-
-        await uploadWithRetry("/api/sos/evidence", token, {
+      // Upload to backend
+      await authedApiFetch("/api/sos/evidence", token, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           alert_id: alertId,
           type: "Audio",
           file_path: filePath,
           file_base64: base64,
-        });
+        }),
+      });
 
-        console.log("[EvidenceCapture] Successfully uploaded 30-second audio evidence.");
-      }
+      console.log("[EvidenceCapture] Successfully uploaded audio evidence snippet.");
     } catch (e) {
-      console.error("[EvidenceCapture] Audio record/upload failed:", e);
+      console.error("[EvidenceCapture] Audio snippet record/upload failed:", e);
     } finally {
       if (recording && currentRecording === recording) {
         currentRecording = null;
       }
-      captureCycleInProgress = false;
     }
   };
 
-  void runCaptureLoop();
-  console.log("[EvidenceCapture] Started sequential evidence capture loop for alert", alertId);
+  // Perform an initial capture immediately
+  void recordAndUploadSnippet();
+
+  // Then record every 30 seconds
+  captureInterval = setInterval(() => {
+    void recordAndUploadSnippet();
+  }, 30000);
+
+  console.log("[EvidenceCapture] Started audio evidence capture loop for alert", alertId);
 };
 
 export const uploadPhotoEvidence = async (alertId: string, token: string, localUri: string) => {
@@ -183,11 +122,15 @@ export const uploadPhotoEvidence = async (alertId: string, token: string, localU
 
     const filePath = `evidence/${alertId}/photo_${Date.now()}.jpg`;
 
-    await uploadWithRetry("/api/sos/evidence", token, {
-      alert_id: alertId,
-      type: "Photo",
-      file_path: filePath,
-      file_base64: base64,
+    await authedApiFetch("/api/sos/evidence", token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        alert_id: alertId,
+        type: "Photo",
+        file_path: filePath,
+        file_base64: base64,
+      }),
     });
 
     console.log("[EvidenceCapture] Successfully uploaded photo evidence.");
@@ -198,7 +141,11 @@ export const uploadPhotoEvidence = async (alertId: string, token: string, localU
 
 export const stopEvidenceCapture = async () => {
   captureSessionId += 1;
-  captureCycleInProgress = false;
+
+  if (captureInterval) {
+    clearInterval(captureInterval);
+    captureInterval = null;
+  }
 
   if (currentRecording) {
     try {
